@@ -14,6 +14,12 @@ npm run dev
 Open http://127.0.0.1:43123.
 
 ```bash
+npm run build
+```
+
+That writes a static `dist/` with relative asset paths (`./assets/...`, `./favicon.svg`), ready to upload to the Vercel project.
+
+```bash
 npm test
 ```
 
@@ -46,12 +52,12 @@ At zero the pile hops, confetti made of tiny bots bursts, a chime plays, and the
 
 Shapes follow the tracks-guide characters: yellow cloud, orange flower, teal rounded square, purple hex and square, pink ghost, blue pill, gray leaf with sleepy dashes, and the black circle hero. Eyes are two slanted pills with no pupils. Blink squashes them flat.
 
-Inter is self-hosted (Latin WOFF2) for the UI and, as a fallback, the big numerals. The brand face is Universal Sans Display Medium. That font file was not in this environment, so drop `UniversalSans-Display-Medium.woff2` into `public/fonts/` and add this to `css/styles.css` if you have it:
+Inter is self-hosted (Latin WOFF2, in `css/fonts/`) for the UI and, as a fallback, the big numerals. The brand face is Universal Sans Display Medium. That font file was not in this environment, so drop `UniversalSans-Display-Medium.woff2` into `css/fonts/` and add this to `css/styles.css` if you have it:
 
 ```css
 @font-face {
   font-family: "Universal Sans Display";
-  src: url("/fonts/UniversalSans-Display-Medium.woff2") format("woff2");
+  src: url("./fonts/UniversalSans-Display-Medium.woff2") format("woff2");
   font-weight: 500;
   font-display: swap;
 }
