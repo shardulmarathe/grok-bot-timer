@@ -98,10 +98,10 @@ function phase() {
 }
 
 function heroFill() {
-  return theme === "dark" ? "#FFFFFF" : "#0A0A0A";
+  return theme === "dark" ? "#2E2E33" : "#0A0A0A";
 }
 function heroEye() {
-  return theme === "dark" ? "#0A0A0A" : "#FFFFFF";
+  return "#FFFFFF";
 }
 
 function fieldFocused() {
@@ -597,7 +597,9 @@ function renderChrome() {
   for (const btn of document.querySelectorAll("[data-preset]")) {
     btn.setAttribute("aria-pressed", btn.dataset.preset === String(armed) && state !== "running" ? "true" : "false");
   }
+  const focusLabel = state === "paused" ? "Resume" : "Pause";
   startBtn.textContent = state === "running" ? "Pause" : state === "paused" ? "Resume" : "Start";
+  if (focusPauseBtn) focusPauseBtn.textContent = focusLabel;
   fillSteppers(state === "idle" ? armed : rem);
   counts();
   void preset;
@@ -996,7 +998,40 @@ eyebrowEl.addEventListener("blur", () => {
   save();
 });
 
+const focusDock = $("focus-dock");
+const focusPauseBtn = $("focus-pause");
+const focusResetBtn = $("focus-reset");
+let dockTimer = 0;
+
+function revealDock() {
+  if (state !== "running" && state !== "paused") return;
+  focusDock.classList.add("visible");
+  focusDock.setAttribute("aria-hidden", "false");
+  clearTimeout(dockTimer);
+  dockTimer = setTimeout(() => {
+    focusDock.classList.remove("visible");
+    focusDock.setAttribute("aria-hidden", "true");
+  }, 2000);
+}
+
+focusPauseBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  startOrPause();
+  revealDock();
+});
+focusResetBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  reset();
+});
+window.addEventListener("pointermove", revealDock);
+window.addEventListener("pointerdown", revealDock);
+
 window.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && (state === "running" || state === "paused")) {
+    e.preventDefault();
+    reset();
+    return;
+  }
   if (e.key !== " " && e.code !== "Space") return;
   const tag = document.activeElement?.tagName;
   if (tag === "INPUT" || tag === "TEXTAREA" || document.activeElement?.isContentEditable) return;

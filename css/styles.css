@@ -94,6 +94,61 @@ button, input { font-family: inherit; }
 
 .bot.falling { z-index: 3; }
 
+.top,
+.eyebrow,
+.sub,
+.bubble,
+.controls,
+#decor {
+  transition: opacity 0.28s ease;
+}
+
+body[data-state="running"] .top,
+body[data-state="running"] .eyebrow,
+body[data-state="running"] .sub,
+body[data-state="running"] .bubble,
+body[data-state="running"] .controls,
+body[data-state="running"] #decor,
+body[data-state="paused"] .top,
+body[data-state="paused"] .eyebrow,
+body[data-state="paused"] .sub,
+body[data-state="paused"] .bubble,
+body[data-state="paused"] .controls,
+body[data-state="paused"] #decor {
+  opacity: 0;
+  pointer-events: none;
+}
+
+#focus-dock {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  z-index: 6;
+  display: none;
+  gap: 8px;
+  transform: translateX(-50%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.28s ease;
+}
+
+body[data-state="running"] #focus-dock,
+body[data-state="paused"] #focus-dock {
+  display: flex;
+}
+
+#focus-dock.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+#focus-dock .pill {
+  min-height: 36px;
+  padding: 8px 14px;
+  font-size: 13px;
+  background: color-mix(in srgb, var(--bg) 86%, transparent);
+}
+
 .ui {
   position: relative;
   z-index: 2;
