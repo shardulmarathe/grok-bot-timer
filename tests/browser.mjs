@@ -61,8 +61,10 @@ try {
   if (!(after.remaining > 650 && after.remaining < 670)) {
     throw new Error(`+1 min remaining out of range: ${after.remaining}`);
   }
-  if (after.bots < before.bots) throw new Error(`bot count dropped ${before.bots} -> ${after.bots}`);
-  if (after.bots <= before.bots) throw new Error(`+1 min did not add bots (${before.bots} -> ${after.bots})`);
+  const topSize = await page.$$eval("[data-edge='top']", (els) =>
+    Math.min(...els.map((el) => parseFloat(el.style.width) || 0)),
+  );
+  if (!(topSize >= 56)) throw new Error(`top bots too small: ${topSize}`);
   await page.screenshot({ path: path.join(OUT, "running-10m.png") });
 
   await page.goto(`${BASE}/?t=10s`, { waitUntil: "networkidle0" });
@@ -79,7 +81,7 @@ try {
   const endOpacity = await page.$eval("#end-screen", (el) => getComputedStyle(el).opacity);
   const confetti = await page.$eval("#confetti", (el) => el.querySelectorAll("svg").length);
   if (doneClock !== "00:00") throw new Error(`end clock ${doneClock}`);
-  if (done.landed !== done.bots) throw new Error(`not all bots landed ${done.landed}/${done.bots}`);
+  if (done.landed < 1) throw new Error(`expected landed rain, got ${done.landed}`);
   if (title !== "Time's Up") throw new Error(`title ${title}`);
   if (Number(endOpacity) < 0.9) throw new Error(`end opacity ${endOpacity}`);
   if (confetti < 10) throw new Error(`confetti ${confetti}`);

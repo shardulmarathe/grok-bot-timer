@@ -4,12 +4,10 @@ import {
   parseDuration,
   formatClock,
   displaySeconds,
-  botCountFor,
   toParam,
   formatEndTime,
-  landingTimes,
 } from "./time.js";
-import { createBotElement, setEyes, PALETTE, DECOR } from "./shapes.js";
+import { createBotElement, setEyes, PALETTE } from "./shapes.js";
 
 const STORE_KEY = "grok-bot-timer";
 
@@ -57,6 +55,10 @@ let audioCtx = null;
 let width = window.innerWidth;
 let height = window.innerHeight;
 let nextId = 1;
+let motionClock = 0;
+let wind = 36;
+let nextSpawnAt = Infinity;
+let finalQueued = true;
 let flipToken = 0;
 let heroPlaying = false;
 let playClock = 0;
@@ -158,16 +160,25 @@ function showHint(text) {
 }
 
 const BOT_EYE = "#FFFFFF";
-const FALL_LEAD = 1800;
 
-const PILE_SCALE = 1.5;
+function baseSize() {
+  const min = width < 720 ? 40 : 56;
+  const max = width < 720 ? 52 : 72;
+  const pct = width < 720 ? 0.12 : 0.06;
+  return Math.round(Math.max(min, Math.min(max, width * pct)));
+}
 
-function pickSize(total) {
-  const n = total || 20;
-  const scale = n <= 30 ? 1 : n <= 80 ? 0.68 : n <= 160 ? 0.48 : 0.36;
-  const spread = n <= 30 ? 38 : 20;
-  const base = Math.max(14, Math.round((24 + Math.random() * spread) * scale));
-  return Math.round(base * PILE_SCALE);
+function frameSize() {
+  const base = baseSize();
+  const min = width < 720 ? 40 : 56;
+  const max = width < 720 ? 52 : 72;
+  return Math.round(Math.max(min, Math.min(max, base * (0.94 + Math.random() * 0.1))));
+}
+
+function fallPhysics(depth) {
+  const drag = 6.4;
+  const vt = (500 + depth * 480) * Math.max(0.8, height / 880);
+  return { drag, vt, grav: vt * drag };
 }
 
 function mixHex(from, to, t) {
@@ -199,12 +210,20 @@ function mount(parent, spec, extra = {}) {
   };
 }
 
+function splashScale(bot) {
+  const t = bot.splashT || 0;
+  if (t < 90) return { sx: 1.26, sy: 0.72 };
+  if (t < 200) return { sx: 0.9, sy: 1.16 };
+  if (t < 310) return { sx: 1.08, sy: 0.9 };
+  return { sx: 1, sy: 1 };
+}
+
 function place(bot) {
-  const bob =
-    bot.state === "air" ? Math.sin(virtual / 520 + bot.id) * 3 : 0;
+  const bob = bot.state === "frame" ? Math.sin(motionClock / 620 + bot.id) * 3.4 : 0;
+  const sc = bot.state === "splash" ? splashScale(bot) : { sx: 1, sy: 1 };
   bot.svg.style.width = `${bot.size}px`;
   bot.svg.style.height = `${bot.size}px`;
-  bot.svg.style.transform = `translate(${bot.x - bot.size / 2}px, ${bot.y + bob - bot.size / 2}px) rotate(${bot.rot}deg)`;
+  bot.svg.style.transform = `translate(${bot.x - bot.size / 2}px, ${bot.y + bob - bot.size / 2}px) rotate(${bot.rot || 0}deg) scale(${sc.sx}, ${sc.sy})`;
 }
 
 function gazeVector(fromX, fromY, toX, toY) {
@@ -227,29 +246,23 @@ function clockCenter() {
 }
 
 function arrivalPoint() {
-  const falling = bots.filter((b) => b.state === "falling");
+  const falling = bots.filter((b) => b.state === "falling" || b.state === "splash");
   if (falling.length) {
     const b = falling[falling.length - 1];
     return { x: b.x, y: b.y };
   }
-  const air = bots.filter((b) => b.state === "air");
-  if (air.length) {
-    const low = air.reduce((a, b) => (a.hy > b.hy ? a : b));
-    return { x: low.hx, y: low.hy };
-  }
   return clockCenter();
 }
 
-/** Mound along the bottom. Rows stay inside the screen and below the centered timer. */
-function layoutMound(list, floorY, margin = 14) {
+function layoutMound(list) {
   if (!list.length) return;
   const sorted = [...list].sort((a, b) => b.size - a.size || a.id - b.id);
-  const maxW = Math.max(160, width - margin * 2);
+  const maxW = Math.max(160, width - 16);
   const rows = [];
   let i = 0;
   let row = 0;
   while (i < sorted.length) {
-    const budget = maxW * Math.max(0.55, 1 - row * 0.06);
+    const budget = maxW * Math.max(0.58, 1 - row * 0.05);
     const rowBots = [];
     let used = 0;
     while (i < sorted.length) {
@@ -263,118 +276,286 @@ function layoutMound(list, floorY, margin = 14) {
     rows.push({ bots: rowBots, used, h: Math.max(...rowBots.map((b) => b.size)) });
     row++;
   }
-  const placed = [];
-  let floor = floorY;
+  let floor = height - 8;
   for (const r of rows) {
     let x = width / 2 - r.used / 2;
     for (const b of r.bots) {
-      const inset = b.size * 0.66 + 4;
-      let hx = x + b.size * 0.37 + Math.sin(b.id * 1.7) * 3;
-      hx = Math.max(inset, Math.min(width - inset, hx));
-      const hy = floor - b.size / 2 + Math.cos(b.id * 2.1) * 2;
-      placed.push({ b, hx, hy, bottom: hy + b.size / 2 });
-      x += b.size * 0.74;
-    }
-    floor -= r.h * 0.56;
-  }
-  const limitTop = height * 0.64;
-  const pileTop = Math.min(...placed.map((p) => p.hy - p.b.size / 2));
-  if (pileTop < limitTop) {
-    const span = Math.max(1, floorY - pileTop);
-    const scale = Math.max(0.15, (floorY - limitTop) / span);
-    for (const p of placed) {
-      const dist = floorY - p.bottom;
-      p.hy = floorY - dist * scale - p.b.size / 2;
-    }
-  }
-  for (const p of placed) {
-    const inset = p.b.size * 0.66 + 4;
-    p.b.hx = Math.max(inset, Math.min(width - inset, p.hx));
-    p.b.hy = Math.max(inset, Math.min(height - inset, p.hy));
-  }
-}
-
-/** Pack the source pile under the header. The top row stays fully on screen. */
-function layoutBand(list, top, bottom) {
-  if (!list.length) return;
-  const margin = width < 720 ? 8 : 16;
-  const maxW = Math.max(140, width - margin * 2);
-  const sorted = [...list].sort((a, b) => a.id - b.id);
-  const rows = [];
-  let row = [];
-  let used = 0;
-  for (const b of sorted) {
-    const need = b.size * 0.8;
-    if (row.length && used + need > maxW) {
-      rows.push({ bots: row, used, h: Math.max(...row.map((x) => x.size)) });
-      row = [];
-      used = 0;
-    }
-    row.push(b);
-    used += need;
-  }
-  if (row.length) rows.push({ bots: row, used, h: Math.max(...row.map((x) => x.size)) });
-  const stepRatio = 0.46;
-  const content = rows.slice(0, -1).reduce((sum, r) => sum + r.h * stepRatio, 0);
-  const band = Math.max(36, bottom - top);
-  const fit = content > band ? band / content : 1;
-  let rowTop = top;
-  rows.forEach((r, i) => {
-    let x = width / 2 - r.used / 2;
-    for (const b of r.bots) {
-      const inset = b.size * 0.66 + 4;
-      let hx = x + b.size * 0.4;
+      const inset = b.size * 0.55;
+      let hx = x + b.size * 0.37;
       hx = Math.max(inset, Math.min(width - inset, hx));
       b.hx = hx;
-      b.hy = rowTop + b.size / 2;
-      x += b.size * 0.8;
+      b.hy = floor - b.size / 2;
+      x += b.size * 0.74;
     }
-    if (i < rows.length - 1) rowTop += Math.max(8, r.h * stepRatio * fit);
-  });
+    floor -= r.h * 0.5;
+  }
 }
 
-function layoutAir(fresh) {
-  const air = bots.filter((b) => b.state === "air" || b.state === "refill");
-  const top = width < 720 ? 28 : 46;
-  const bottom = width < 720 ? Math.min(188, height * 0.26) : Math.min(220, height * 0.26);
-  layoutBand(air, top, bottom);
-  if (fresh) {
-    for (const b of air) {
-      b.x = b.hx;
-      b.y = b.hy;
-    }
-  }
+function pileCap() {
+  const s = baseSize();
+  const per = Math.max(4, Math.floor((width - 16) / (s * 0.74)));
+  const rows = Math.max(1, Math.floor((height * 0.36) / (s * 0.5)));
+  return per * rows;
 }
 
 function layoutLanded() {
-  layoutMound(
-    bots.filter((b) => b.state === "landed"),
-    height - 12,
-  );
+  const landed = bots.filter((b) => b.state === "landed" && !b.retiring);
+  const cap = pileCap();
+  if (landed.length > cap) {
+    const ranked = [...landed].sort((a, b) => {
+      const edgeA = Math.abs(a.x - width / 2) / width;
+      const edgeB = Math.abs(b.x - width / 2) / width;
+      return a.id - edgeA * 1e6 - (b.id - edgeB * 1e6);
+    });
+    for (let i = 0; i < landed.length - cap; i++) {
+      ranked[i].retiring = true;
+      ranked[i].retireT = ranked[i].retireT || 0;
+    }
+  }
+  layoutMound(bots.filter((b) => b.state === "landed" && !b.retiring));
 }
 
-function makePileBot(index, { fromAbove = false, total } = {}) {
-  const spec = PALETTE[index % PALETTE.length];
-  const rotSign = Math.random() < 0.5 ? -1 : 1;
-  const rot = rotSign * (8 + Math.random() * 14);
+function frameSlots() {
+  const s = baseSize();
+  const slots = [];
+  const step = s * 0.82;
+  const across = Math.max(8, Math.min(18, Math.round((width + s * 0.35) / step)));
+  const rows = height >= 500 ? 2 : 1;
+  for (let row = 0; row < rows; row++) {
+    const n = row === 0 ? across : Math.max(6, across - 2);
+    const span = width + s * 0.45;
+    const dx = span / n;
+    for (let i = 0; i < n; i++) {
+      slots.push({
+        edge: "top",
+        x: -s * 0.22 + i * dx + (row ? dx * 0.48 : 0),
+        y: s * (0.28 + row * 0.52),
+      });
+    }
+  }
+  const bStep = (width + s * 0.35) / across;
+  for (let i = 0; i < across; i++) {
+    slots.push({
+      edge: "bottom",
+      x: -s * 0.18 + i * bStep,
+      y: height - s * 0.2,
+    });
+  }
+  const vStep = s * 0.8;
+  const sideN = Math.max(2, Math.floor((height - s * 2.2) / vStep));
+  for (let i = 0; i < sideN; i++) {
+    const y = s * 1.25 + i * vStep;
+    if (y > height - s * 1.2) break;
+    slots.push({ edge: "left", x: s * 0.16, y });
+    slots.push({ edge: "right", x: width - s * 0.16, y });
+  }
+  return slots;
+}
+
+function orderWorld() {
+  const rank = (b) => (b.state === "frame" ? 0 : b.state === "falling" ? 1 + (b.depth || 0) : 4);
+  const ordered = [...bots].sort((a, b) => rank(a) - rank(b) || a.id - b.id);
+  for (const b of ordered) worldEl.appendChild(b.svg);
+}
+
+function rebuildFrame() {
+  for (const b of bots) {
+    if (b.state === "frame") b.svg.remove();
+  }
+  bots = bots.filter((b) => b.state !== "frame");
+  frameSlots().forEach((slot, i) => {
+    const spec = PALETTE[i % PALETTE.length];
+    const bot = mount(worldEl, { kind: spec.kind, fill: spec.fill, dash: !!spec.dash, eye: BOT_EYE }, {
+      id: nextId++,
+      size: frameSize(),
+      rot: (Math.random() < 0.5 ? -1 : 1) * (3 + Math.random() * 8),
+      state: "frame",
+      nextBlink: motionClock + 400 + Math.random() * 2400,
+      blinkStart: 0,
+    });
+    bot.edge = slot.edge;
+    bot.fill = spec.fill;
+    bot.dash = !!spec.dash;
+    bot.hx = slot.x;
+    bot.hy = slot.y;
+    bot.x = slot.x;
+    bot.y = slot.y;
+    bot.svg.dataset.edge = slot.edge;
+    bot.svg.dataset.role = "frame";
+    bots.push(bot);
+  });
+  orderWorld();
+}
+
+function surfaceY(x, size) {
+  let y = height - size * 0.18;
+  for (const b of bots) {
+    if ((b.state !== "landed" && b.state !== "splash") || b.retiring) continue;
+    if (Math.abs(b.x - x) < (b.size + size) * 0.45) y = Math.min(y, b.y - b.size * 0.46);
+  }
+  return y;
+}
+
+function predictFallMs(depth, size) {
+  const { drag, grav } = fallPhysics(depth);
+  let y = -size * 0.2;
+  let vy = 30 + depth * 30;
+  const floor = height - size * 0.18;
+  let t = 0;
+  const step = 16;
+  while (y < floor && t < 5000) {
+    const sec = step / 1000;
+    vy += (grav - drag * vy) * sec;
+    y += vy * sec;
+    t += step;
+  }
+  return t;
+}
+
+function pulseTop(x) {
+  let best = null;
+  let dist = Infinity;
+  for (const b of bots) {
+    if (b.state !== "frame" || b.edge !== "top" || b.refillStart != null) continue;
+    const d = Math.abs(b.hx - x);
+    if (d < dist) {
+      dist = d;
+      best = b;
+    }
+  }
+  if (best && dist < best.size * 1.6) best.refillStart = motionClock;
+}
+
+function spawnDrop(opts = {}) {
+  const spec = PALETTE[Math.floor(Math.random() * PALETTE.length)];
+  const depth = opts.depth ?? Math.random();
+  const base = baseSize();
+  const min = width < 720 ? 40 : 56;
+  const max = width < 720 ? 52 : 72;
+  const size = Math.round(Math.max(min, Math.min(max, base * (0.86 + depth * 0.16))));
+  const phys = fallPhysics(depth);
   const bot = mount(worldEl, { kind: spec.kind, fill: spec.fill, dash: !!spec.dash, eye: BOT_EYE }, {
     id: nextId++,
-    size: pickSize(total || botCountFor(Math.max(armed, runSpan, 12))),
-    rot,
-    state: "air",
+    size,
+    rot: Math.max(-6, Math.min(6, wind * 0.055 + (Math.random() - 0.5) * 2.2)),
+    state: "falling",
+    nextBlink: motionClock + 600,
     blinkStart: 0,
-    nextBlink: 800 + Math.random() * 4000,
   });
-  bot.hx = width / 2;
-  bot.hy = -bot.size;
-  bot.x = width / 2 + (Math.random() - 0.5) * 80;
-  bot.y = fromAbove ? -bot.size - 40 : -20;
-  return bot;
+  bot.depth = depth;
+  bot.fill = spec.fill;
+  bot.dash = !!spec.dash;
+  bot.x = opts.x ?? size * 0.15 + Math.random() * Math.max(20, width - size * 0.3);
+  bot.y = -size * (0.08 + Math.random() * 0.28);
+  bot.vx = wind * (0.72 + Math.random() * 0.5) * (0.62 + depth * 0.5);
+  bot.vy = 16 + depth * 36;
+  bot.drag = phys.drag;
+  bot.grav = phys.grav;
+  bot.opacity = 0.5 + depth * 0.5;
+  bot.final = !!opts.final;
+  bot.svg.classList.add("falling");
+  bot.svg.dataset.role = "rain";
+  bot.svg.style.opacity = String(bot.opacity);
+  bot.svg.style.zIndex = String(2 + Math.round(depth * 6));
+  bots.push(bot);
+  pulseTop(bot.x);
+  orderWorld();
 }
 
-function destroyBot(bot) {
-  bot.svg.remove();
-  bots = bots.filter((b) => b !== bot);
+function armRain() {
+  wind = (Math.random() < 0.5 ? -1 : 1) * (24 + Math.random() * 42);
+  nextSpawnAt = virtual + 140 + Math.random() * 360;
+  finalQueued = false;
+}
+
+function tickSpawn() {
+  if (state !== "running" || finalQueued) return;
+  const size = baseSize();
+  const travel = predictFallMs(0.84, size);
+  const finalAt = endVirtual - travel;
+  const span = Math.max(1, runSpan * 1000);
+  const prog = Math.max(0, Math.min(1, 1 - (endVirtual - virtual) / span));
+  if (virtual >= finalAt) {
+    spawnDrop({ depth: 0.84, final: true });
+    finalQueued = true;
+    return;
+  }
+  if (virtual < nextSpawnAt) return;
+  spawnDrop();
+  const interval = (720 - prog * 260) * (0.58 + Math.random() * 0.85);
+  nextSpawnAt = virtual + interval;
+  if (nextSpawnAt > finalAt) nextSpawnAt = finalAt;
+}
+
+function startSplash(bot) {
+  bot.state = "splash";
+  bot.splashT = 0;
+  bot.bounces = 1;
+  bot.splashFloor = bot.y;
+  bot.vy = -Math.min(210, Math.abs(bot.vy) * 0.25);
+  bot.svg.classList.remove("falling");
+  lastLanded = bot;
+}
+
+function tickMotion(dt) {
+  const sec = Math.max(0, dt / 1000);
+  for (const bot of bots) {
+    if (bot.state === "frame") {
+      bot.x = bot.hx;
+      bot.y = bot.hy;
+    } else if (bot.state === "falling" && sec > 0) {
+      bot.vy += (bot.grav - bot.drag * bot.vy) * sec;
+      bot.x += bot.vx * sec;
+      bot.y += bot.vy * sec;
+      if (bot.final && virtual < endVirtual - 40 && bot.y > surfaceY(bot.x, bot.size) - 10) {
+        bot.y = Math.min(bot.y, surfaceY(bot.x, bot.size) - 8);
+        bot.vy = Math.min(bot.vy, 80);
+      }
+      if (bot.y >= surfaceY(bot.x, bot.size)) {
+        bot.y = surfaceY(bot.x, bot.size);
+        startSplash(bot);
+      }
+    } else if (bot.state === "splash" && sec > 0) {
+      bot.splashT += dt;
+      bot.vy += bot.grav * sec;
+      bot.y += bot.vy * sec;
+      bot.x += bot.vx * sec * 0.2;
+      if (bot.y >= bot.splashFloor) {
+        bot.y = bot.splashFloor;
+        bot.vy = -bot.vy * 0.28;
+        bot.bounces = (bot.bounces || 0) + 1;
+        if (bot.bounces >= 2 || Math.abs(bot.vy) < 55 || bot.splashT > 460) {
+          bot.state = "landed";
+          bot.vy = 0;
+          bot.vx = 0;
+          layoutLanded();
+        }
+      }
+    } else if (bot.state === "landed" && sec > 0 && bot.hx != null) {
+      const k = Math.min(1, dt / 170);
+      bot.x += (bot.hx - bot.x) * k;
+      bot.y += (bot.hy - bot.y) * k;
+    }
+    if (motionClock > (bot.nextBlink || 0)) {
+      bot.blinkStart = motionClock;
+      bot.nextBlink = motionClock + 1800 + Math.random() * 3200;
+    }
+  }
+}
+
+function tickRetire(dt) {
+  for (const bot of bots) {
+    if (!bot.retiring) continue;
+    bot.retireT = (bot.retireT || 0) + dt;
+    bot.svg.style.opacity = String(Math.max(0, 1 - bot.retireT / 380));
+    if (bot.retireT > 380) bot.dead = true;
+  }
+  if (!bots.some((b) => b.dead)) return;
+  bots = bots.filter((b) => {
+    if (!b.dead) return true;
+    b.svg.remove();
+    return false;
+  });
 }
 
 function rebuild() {
@@ -386,185 +567,12 @@ function rebuild() {
   confettiAt = 0;
   worldEl.classList.remove("hop");
   heroEl.classList.remove("cheer");
-  const n = botCountFor(armed);
-  for (let i = 0; i < n; i++) bots.push(makePileBot(i, { total: n }));
-  layoutAir(true);
+  finalQueued = true;
+  nextSpawnAt = Infinity;
   lastLanded = null;
   line = null;
   bubbleEl.hidden = true;
-}
-
-function ensureCount(spanSeconds) {
-  const want = botCountFor(spanSeconds);
-  let guard = 0;
-  while (bots.length < want && guard++ < 80) {
-    const bot = makePileBot(bots.length, { fromAbove: true });
-    bots.push(bot);
-  }
-  const airborne = () => bots.filter((b) => b.state === "air" || b.state === "falling");
-  while (bots.length > want) {
-    const air = bots.filter((b) => b.state === "air");
-    if (!air.length) break;
-    const top = air.reduce((a, b) => (a.hy < b.hy ? a : b));
-    destroyBot(top);
-  }
-  if (remainingSec() > 0.05 && airborne().length === 0) {
-    const bot = makePileBot(bots.length, { fromAbove: true });
-    bots.push(bot);
-  }
-  layoutAir(false);
-}
-
-function guardAirborne() {
-  if (remainingSec() <= 0.05) return;
-  const flying = bots.some((b) => b.state === "air" || b.state === "falling");
-  if (flying) return;
-  const bot = makePileBot(bots.length, { fromAbove: true });
-  bots.push(bot);
-  layoutAir(false);
-  bot.landAt = endVirtual;
-}
-
-function scheduleAir() {
-  for (const b of bots) {
-    if (b.state === "falling" && b.landAt > endVirtual) {
-      b.landAt = endVirtual;
-      b.fallDur = Math.max(80, b.landAt - b.fallStart);
-    }
-  }
-  let air = bots
-    .filter((b) => b.state === "air")
-    .slice()
-    .sort((a, b) => b.hy - a.hy);
-  const falling = bots.filter((b) => b.state === "falling");
-  if (!air.length && remainingSec() > 0.05) {
-    const latest = falling.reduce((m, b) => Math.max(m, b.landAt || 0), 0);
-    if (!falling.length || latest < endVirtual - 40) {
-      const bot = makePileBot(bots.length, { fromAbove: true });
-      bots.push(bot);
-      layoutAir(false);
-      air = bots.filter((b) => b.state === "air").sort((a, b) => b.hy - a.hy);
-    }
-  }
-  if (!air.length) return;
-  let cursor = virtual;
-  for (const b of falling) cursor = Math.max(cursor, b.landAt || virtual);
-  if (cursor > endVirtual) cursor = endVirtual;
-  const times = landingTimes(air.length, cursor, endVirtual);
-  air.forEach((b, i) => {
-    b.landAt = times[i];
-  });
-}
-
-function spawnRefill(slot) {
-  if (remainingSec() < 5) return;
-  const bot = mount(worldEl, { kind: slot.kind, fill: "#161616", dash: !!slot.dash, eye: BOT_EYE }, {
-    id: nextId++,
-    size: slot.size,
-    rot: slot.rot,
-    state: "refill",
-    blinkStart: 0,
-    nextBlink: virtual + 2000 + Math.random() * 4000,
-  });
-  bot.fill = slot.fill;
-  bot.hx = slot.hx;
-  bot.hy = slot.hy;
-  bot.x = slot.hx;
-  bot.y = slot.hy;
-  bot.refillStart = virtual;
-  bot.svg.style.opacity = "0.22";
-  bots.push(bot);
-}
-
-function startFall(bot) {
-  const sx = bot.x;
-  const sy = bot.y;
-  const slot = {
-    hx: bot.hx,
-    hy: bot.hy,
-    size: bot.size,
-    rot: bot.rot,
-    kind: bot.kind,
-    fill: bot.fill,
-    dash: bot.dash,
-  };
-  bot.state = "falling";
-  bot.svg.classList.add("falling");
-  bot.fallStart = virtual;
-  bot.fallDur = Math.max(220, bot.landAt - virtual);
-  bot.lane = bot.id % 2 === 0 ? 0.12 : 0.88;
-  const landed = bots.filter((b) => b.state === "landed");
-  const prev = landed.map((b) => ({ b, x: b.x, y: b.y }));
-  layoutMound([...landed, bot], height - 12);
-  bot.tx = bot.hx;
-  bot.ty = bot.hy;
-  bot.sx = sx;
-  bot.sy = sy;
-  bot.x = sx;
-  bot.y = sy;
-  for (const s of prev) {
-    s.b.x = s.x;
-    s.b.y = s.y;
-  }
-  spawnRefill(slot);
-}
-
-function fallPosition(bot, u) {
-  const laneX = width * bot.lane;
-  const dropY = Math.min(height * 0.8, bot.ty - 10);
-  let x;
-  let y;
-  if (u < 0.18) {
-    const k = u / 0.18;
-    x = bot.sx + (laneX - bot.sx) * k;
-    y = bot.sy + 24 * k;
-  } else if (u < 0.78) {
-    const k = (u - 0.18) / 0.6;
-    x = laneX;
-    y = bot.sy + 24 + (dropY - (bot.sy + 24)) * k;
-  } else {
-    const k = (u - 0.78) / 0.22;
-    x = laneX + (bot.tx - laneX) * k;
-    y = dropY + (bot.ty - dropY) * k;
-  }
-  return { x, y };
-}
-
-function tickMotion() {
-  const air = bots.filter((b) => b.state === "air");
-  for (const bot of air) {
-    if (state === "running" && bot.landAt != null && virtual + FALL_LEAD >= bot.landAt) {
-      startFall(bot);
-      continue;
-    }
-    bot.x += (bot.hx - bot.x) * 0.14;
-    bot.y += (bot.hy - bot.y) * 0.14;
-  }
-  for (const bot of bots) {
-    if (bot.state === "falling") {
-      const t = Math.min(1, (virtual - bot.fallStart) / bot.fallDur);
-      const pos = fallPosition(bot, t);
-      bot.x = pos.x;
-      bot.y = pos.y;
-      if (t >= 1) {
-        bot.state = "landed";
-        bot.svg.classList.remove("falling");
-        bot.x = bot.tx;
-        bot.y = bot.ty;
-        bot.hx = bot.tx;
-        bot.hy = bot.ty;
-        lastLanded = bot;
-        layoutLanded();
-      }
-    } else if (bot.state === "landed") {
-      bot.x += (bot.hx - bot.x) * 0.2;
-      bot.y += (bot.hy - bot.y) * 0.2;
-    }
-    if (virtual > bot.nextBlink) {
-      bot.blinkStart = virtual;
-      bot.nextBlink = virtual + 2200 + Math.random() * 4200;
-    }
-  }
+  rebuildFrame();
 }
 
 function paintGaze() {
@@ -579,21 +587,26 @@ function paintGaze() {
   for (const bot of bots) {
     let target = center;
     if (bot.state === "landed" && bot.y <= topCut + 8) target = arrive;
-    else if (bot.state === "falling") target = { x: bot.tx, y: bot.ty };
-    else if (bot.state === "air") target = center;
+    else if (bot.state === "falling" || bot.state === "splash") target = { x: bot.x + (bot.vx || 0) * 0.15, y: bot.y + bot.size };
     const g = gazeVector(bot.x, bot.y, target.x, target.y);
-    setEyes(bot, { gazeX: g.x, gazeY: g.y, blink: blinkScale(bot), eye: BOT_EYE });
-    if (bot.state === "refill" && bot.refillStart != null) {
-      const p = Math.min(1, (virtual - bot.refillStart) / 1000);
+    setEyes(bot, { gazeX: g.x, gazeY: g.y, blink: blinkScale(bot, motionClock), eye: BOT_EYE });
+    if (bot.state === "frame" && bot.refillStart != null) {
+      const p = Math.min(1, (motionClock - bot.refillStart) / 1000);
       const ease = 1 - Math.pow(1 - p, 2);
       bot.svg.style.opacity = String(0.22 + 0.78 * ease);
       setEyes(bot, {
         gazeX: g.x,
         gazeY: g.y,
-        blink: blinkScale(bot),
+        blink: blinkScale(bot, motionClock),
         eye: BOT_EYE,
         fill: mixHex("#141414", bot.fill, ease),
       });
+      if (p >= 1) {
+        bot.refillStart = null;
+        bot.svg.style.opacity = "1";
+      }
+    } else if (bot.state === "falling") {
+      bot.svg.style.opacity = String(bot.opacity ?? 1);
     }
     place(bot);
   }
@@ -626,7 +639,7 @@ function paintGaze() {
 
 function counts() {
   const landed = bots.filter((b) => b.state === "landed").length;
-  const air = bots.filter((b) => b.state === "air" || b.state === "falling").length;
+  const air = bots.filter((b) => b.state === "falling" || b.state === "splash").length;
   worldEl.dataset.bots = String(bots.length);
   worldEl.dataset.landed = String(landed);
   worldEl.dataset.air = String(air);
@@ -950,20 +963,21 @@ function finish() {
   if (state === "done") return;
   state = "done";
   virtual = endVirtual;
+  finalQueued = true;
   for (const b of bots) {
-    if (b.state === "refill") {
-      setEyes(b, { eye: BOT_EYE, fill: b.fill });
-      b.svg.style.opacity = "1";
-    }
-    if (b.state === "air" || b.state === "falling" || b.state === "refill") {
+    if (b.state === "falling" || b.state === "splash") {
       b.state = "landed";
       b.svg.classList.remove("falling");
+      b.vy = 0;
+      b.svg.style.opacity = "1";
     }
   }
   layoutLanded();
   for (const b of bots) {
-    b.x = b.hx;
-    b.y = b.hy;
+    if (b.state === "landed" && b.hx != null) {
+      b.x = b.hx;
+      b.y = b.hy;
+    }
   }
   worldEl.classList.remove("hop");
   void worldEl.offsetWidth;
@@ -990,8 +1004,10 @@ function commit(seconds, { runningRetarget = true } = {}) {
   if ((state === "running" || state === "paused") && runningRetarget) {
     endVirtual = virtual + next * 1000;
     runSpan = elapsedSec() + next;
-    ensureCount(Math.max(runSpan, next));
-    scheduleAir();
+    if (finalQueued && endVirtual > virtual + 900) {
+      finalQueued = false;
+      nextSpawnAt = virtual + 180;
+    }
     if (endVirtual <= virtual + 40) finish();
   } else if (state === "done" || state === "idle") {
     state = "idle";
@@ -1031,8 +1047,10 @@ function shift(ms) {
   armed = Math.max(1, Math.round(runSpan));
   save();
   updateUrl();
-  ensureCount(runSpan);
-  scheduleAir();
+  if (finalQueued && endVirtual > virtual + 900) {
+    finalQueued = false;
+    nextSpawnAt = virtual + 180;
+  }
   if (ms > 0) say("still here with you");
   renderChrome();
 }
@@ -1050,7 +1068,7 @@ function restart() {
   virtual = 0;
   endVirtual = armed * 1000;
   runSpan = armed;
-  scheduleAir();
+  armRain();
   say("on it.");
   state = "running";
   if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
@@ -1071,7 +1089,7 @@ function startOrPause() {
     virtual = 0;
     endVirtual = armed * 1000;
     runSpan = armed;
-    scheduleAir();
+    armRain();
     say("on it.");
   }
   state = "running";
@@ -1103,31 +1121,6 @@ function applyTheme(next) {
 function buildDecor() {
   decorEl.replaceChildren();
   decorBots = [];
-  const small = window.innerWidth < 720;
-  DECOR.forEach((spec, i) => {
-    const bot = mount(decorEl, { kind: spec.kind, fill: spec.fill, dash: !!spec.dash, eye: BOT_EYE }, {
-      id: 1000 + i,
-      size: small ? spec.size * 0.62 : spec.size,
-      rot: spec.rot,
-      state: "decor",
-      nextBlink: 1000 + Math.random() * 4000,
-      blinkStart: 0,
-    });
-    bot.svg.style.left = spec.x;
-    bot.svg.style.top = spec.y;
-    bot.svg.style.width = `${bot.size}px`;
-    bot.svg.style.height = `${bot.size}px`;
-    bot.svg.style.transform = `translate(-30%, -30%) rotate(${spec.rot}deg)`;
-    const r = () => bot.svg.getBoundingClientRect();
-    bot.cx = 0;
-    bot.cy = 0;
-    bot.readCenter = () => {
-      const box = r();
-      bot.cx = box.left + box.width / 2;
-      bot.cy = box.top + box.height / 2;
-    };
-    decorBots.push(bot);
-  });
 }
 
 function buildHero() {
@@ -1172,16 +1165,18 @@ function boot() {
 function loop(ts) {
   const dt = lastTs ? Math.min(48, ts - lastTs) : 16;
   lastTs = ts;
+  motionClock += dt;
   if (state === "running") {
     virtual += dt;
     if (virtual > endVirtual) virtual = endVirtual;
-    guardAirborne();
-    tickMotion();
+    tickSpawn();
+    tickMotion(dt);
     updateBubble();
     if (virtual >= endVirtual) finish();
   } else {
-    tickMotion();
+    tickMotion(0);
   }
+  tickRetire(dt);
   if (state === "done") tickPlay(dt);
   for (const d of decorBots) d.readCenter?.();
   paintGaze();
@@ -1300,8 +1295,7 @@ window.addEventListener("keydown", (e) => {
 window.addEventListener("resize", () => {
   width = window.innerWidth;
   height = window.innerHeight;
-  buildDecor();
-  layoutAir(false);
+  rebuildFrame();
   layoutLanded();
 });
 
