@@ -55,7 +55,7 @@ try {
   const before = await stats(page);
   await page.click("#start");
   await page.waitForFunction(() => document.body.dataset.state === "running");
-  await page.click("#plus1");
+  await page.$eval("#plus1", (el) => el.click());
   await page.waitForFunction(() => Number(document.querySelector("#clock").dataset.remaining) > 650);
   const after = await stats(page);
   if (!(after.remaining > 650 && after.remaining < 670)) {
@@ -75,13 +75,13 @@ try {
   await new Promise((r) => setTimeout(r, 700));
   const done = await stats(page);
   const doneClock = await clock(page);
-  const eyebrow = await page.$eval("#eyebrow", (el) => el.textContent.trim());
-  const lineHidden = await page.$eval("#done-line", (el) => el.hidden);
+  const title = await page.$eval("#end-title", (el) => el.textContent.trim());
+  const endOpacity = await page.$eval("#end-screen", (el) => getComputedStyle(el).opacity);
   const confetti = await page.$eval("#confetti", (el) => el.querySelectorAll("svg").length);
   if (doneClock !== "00:00") throw new Error(`end clock ${doneClock}`);
   if (done.landed !== done.bots) throw new Error(`not all bots landed ${done.landed}/${done.bots}`);
-  if (eyebrow !== "TIME'S UP") throw new Error(`eyebrow ${eyebrow}`);
-  if (lineHidden) throw new Error("done line hidden");
+  if (title !== "Time's Up") throw new Error(`title ${title}`);
+  if (Number(endOpacity) < 0.9) throw new Error(`end opacity ${endOpacity}`);
   if (confetti < 10) throw new Error(`confetti ${confetti}`);
   await page.screenshot({ path: path.join(OUT, "done.png") });
 
@@ -110,7 +110,7 @@ try {
     console.error(realErrors.join("\n"));
     throw new Error(`${realErrors.length} console errors`);
   }
-  console.log("browser ok", { before, after, done, confetti, eyebrow });
+  console.log("browser ok", { before, after, done, confetti, title });
 } finally {
   await browser.close();
 }

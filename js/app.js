@@ -18,11 +18,15 @@ const decorEl = $("decor");
 const worldEl = $("world");
 const confettiEl = $("confetti");
 const clockEl = $("clock");
+const clusterEl = $("clock-cluster");
 const subEl = $("sub");
 const doneEl = $("done-line");
 const eyebrowEl = $("eyebrow");
 const bubbleEl = $("bubble");
 const heroEl = $("hero");
+const heroWrapEl = heroEl.parentElement;
+const playLayerEl = $("play-layer");
+const endScreenEl = $("end-screen");
 const themeBtn = $("theme");
 const startBtn = $("start");
 const hintEl = $("hint");
@@ -53,6 +57,28 @@ let audioCtx = null;
 let width = window.innerWidth;
 let height = window.innerHeight;
 let nextId = 1;
+let flipToken = 0;
+let heroPlaying = false;
+let playClock = 0;
+const play = {
+  x: 0,
+  y: 0,
+  tx: 0,
+  ty: 0,
+  hopping: false,
+  hopT: 0,
+  nextHop: 0,
+};
+
+function prefersReduced() {
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+function layoutMode(next = state) {
+  if (next === "running" || next === "paused") return "focus";
+  if (next === "done") return "end";
+  return "setup";
+}
 
 function readStore() {
   try {
@@ -185,9 +211,9 @@ function gazeVector(fromX, fromY, toX, toY) {
   return { x: Math.max(-1, Math.min(1, dx / m)), y: Math.max(-1, Math.min(1, dy / m)) };
 }
 
-function blinkScale(bot) {
+function blinkScale(bot, clock = virtual) {
   if (!bot.blinkStart) return 1;
-  const t = (virtual - bot.blinkStart) / 150;
+  const t = (clock - bot.blinkStart) / 150;
   if (t < 0 || t > 1) return 1;
   return t < 0.45 ? 1 - (t / 0.45) * 0.9 : 0.1 + ((t - 0.45) / 0.55) * 0.9;
 }
@@ -546,19 +572,22 @@ function paintGaze() {
     setEyes(bot, { gazeX: g.x, gazeY: g.y, blink: blinkScale(bot), eye: BOT_EYE });
   }
   if (hero) {
-    const target = lastLanded
-      ? { x: lastLanded.x, y: lastLanded.y }
-      : arrive;
+    const clock = state === "done" ? playClock : virtual;
+    const target = heroPlaying
+      ? { x: play.tx, y: play.ty }
+      : lastLanded
+        ? { x: lastLanded.x, y: lastLanded.y }
+        : arrive;
     const hr = heroEl.getBoundingClientRect();
     const g = gazeVector(hr.left + hr.width / 2, hr.top + hr.height / 2, target.x, target.y);
-    if (virtual > hero.nextBlink) {
-      hero.blinkStart = virtual;
-      hero.nextBlink = virtual + 2600 + Math.random() * 3000;
+    if (clock > hero.nextBlink) {
+      hero.blinkStart = clock;
+      hero.nextBlink = clock + (state === "done" ? 900 : 2600) + Math.random() * (state === "done" ? 1400 : 3000);
     }
     setEyes(hero, {
       gazeX: g.x,
       gazeY: g.y,
-      blink: blinkScale(hero),
+      blink: blinkScale(hero, clock),
       eye: heroEye(),
       fill: heroFill(),
     });
@@ -573,19 +602,185 @@ function counts() {
   worldEl.dataset.air = String(air);
 }
 
+function runFlip(first, last) {
+  const token = ++flipToken;
+  const fw = first.width || 1;
+  const lw = last.width || 1;
+  const dx = first.left + fw / 2 - (last.left + lw / 2);
+  const dy = first.top + first.height / 2 - (last.top + last.height / 2);
+  const s = Math.max(0.2, Math.min(4, fw / lw));
+  const ms = prefersReduced() ? 280 : 720;
+  clusterEl.style.transition = "none";
+  clusterEl.style.transformOrigin = "center center";
+  clusterEl.style.transform = `translate(${dx}px, ${dy}px) scale(${s})`;
+  void clusterEl.offsetWidth;
+  requestAnimationFrame(() => {
+    if (token !== flipToken) return;
+    clusterEl.style.transition = `transform ${ms}ms cubic-bezier(.2,.8,.2,1)`;
+    clusterEl.style.transform = "translate(0px, 0px) scale(1)";
+  });
+  const clear = () => {
+    if (token !== flipToken) return;
+    flipToken += 1;
+    clusterEl.style.transition = "";
+    clusterEl.style.transform = "";
+    clusterEl.removeEventListener("transitionend", onEnd);
+  };
+  const onEnd = (event) => {
+    if (event.target !== clusterEl || event.propertyName !== "transform") return;
+    clear();
+  };
+  clusterEl.addEventListener("transitionend", onEnd);
+  setTimeout(clear, ms + 90);
+}
+
+function endOccupied() {
+  const title = $("end-title")?.getBoundingClientRect();
+  const actions = document.querySelector(".end-actions")?.getBoundingClientRect();
+  if (!title || !actions || title.width < 8) return null;
+  const padX = 96;
+  const padY = 72;
+  return {
+    left: Math.min(title.left, actions.left) - padX,
+    right: Math.max(title.right, actions.right) + padX,
+    top: title.top - padY,
+    bottom: actions.bottom + padY,
+  };
+}
+
+function playBlocked(x, y) {
+  const box = endOccupied();
+  if (!box) return false;
+  return x > box.left && x < box.right && y > box.top && y < box.bottom;
+}
+
+function pickPlayTarget() {
+  const spots = [
+    { x: width * (0.1 + Math.random() * 0.8), y: height * (0.76 + Math.random() * 0.14) },
+    { x: width * (0.08 + Math.random() * 0.18), y: height * (0.74 + Math.random() * 0.16) },
+    { x: width * (0.74 + Math.random() * 0.18), y: height * (0.74 + Math.random() * 0.16) },
+    { x: width * (0.12 + Math.random() * 0.76), y: height * (0.06 + Math.random() * 0.1) },
+  ];
+  for (const spot of spots) {
+    if (!playBlocked(spot.x, spot.y)) {
+      play.tx = Math.max(70, Math.min(width - 70, spot.x));
+      play.ty = Math.max(70, Math.min(height - 70, spot.y));
+      return;
+    }
+  }
+  play.tx = width * 0.5;
+  play.ty = height * 0.86;
+}
+
+function startHeroPlay() {
+  if (heroPlaying) return;
+  const box = heroEl.getBoundingClientRect();
+  play.x = box.left + box.width / 2;
+  play.y = box.top + box.height / 2;
+  play.tx = play.x;
+  play.ty = play.y;
+  play.hopping = false;
+  play.hopT = 0;
+  play.nextHop = playClock + 280;
+  hero.blinkStart = 0;
+  hero.nextBlink = playClock + 360;
+  heroPlaying = true;
+  playLayerEl.hidden = false;
+  playLayerEl.setAttribute("aria-hidden", "false");
+  playLayerEl.appendChild(heroEl);
+  const playSize = Math.max(112, Math.min(156, box.width));
+  heroEl.style.width = `${playSize}px`;
+  heroEl.style.height = `${playSize}px`;
+  heroEl.style.transform = `translate(${play.x}px, ${play.y}px) translate(-50%, -50%)`;
+  pickPlayTarget();
+}
+
+function stopHeroPlay() {
+  if (!heroPlaying && heroEl.parentElement === heroWrapEl) return;
+  heroPlaying = false;
+  heroWrapEl.appendChild(heroEl);
+  heroEl.style.transform = "";
+  heroEl.style.width = "";
+  heroEl.style.height = "";
+  playLayerEl.hidden = true;
+  playLayerEl.setAttribute("aria-hidden", "true");
+}
+
+function tickPlay(dt) {
+  if (!heroPlaying) return;
+  playClock += dt;
+  const reduce = prefersReduced();
+  const rate = 1 - Math.pow(1 - (reduce ? 0.018 : 0.04), dt / 16.67);
+  if (playBlocked(play.x, play.y) || playBlocked(play.tx, play.ty)) {
+    play.tx = play.x < width / 2 ? width * 0.12 : width * 0.88;
+    play.ty = height * 0.84;
+    if (playBlocked(play.tx, play.ty)) {
+      play.tx = width * 0.5;
+      play.ty = height * 0.88;
+    }
+  }
+  play.x += (play.tx - play.x) * rate;
+  play.y += (play.ty - play.y) * rate;
+  if (Math.hypot(play.tx - play.x, play.ty - play.y) < 28) pickPlayTarget();
+
+  let hop = reduce ? Math.sin(playClock / 900) * 5 : 0;
+  let sx = 1;
+  let sy = 1;
+  if (!reduce && playClock > play.nextHop && !play.hopping) {
+    play.hopping = true;
+    play.hopT = 0;
+    play.nextHop = playClock + 1100 + Math.random() * 1600;
+  }
+  if (play.hopping) {
+    play.hopT += dt;
+    const t = play.hopT / 560;
+    if (t >= 1) {
+      play.hopping = false;
+    } else {
+      hop = Math.sin(Math.min(1, t) * Math.PI) * 42;
+      if (t < 0.16) {
+        sx = 1.18;
+        sy = 0.82;
+      } else if (t < 0.55) {
+        sx = 0.88;
+        sy = 1.16;
+      } else {
+        sx = 1.12;
+        sy = 0.86;
+      }
+    }
+  }
+  const tilt = reduce ? 0 : Math.max(-14, Math.min(14, (play.tx - play.x) * 0.05));
+  heroEl.style.transform = `translate(${play.x}px, ${play.y - hop}px) translate(-50%, -50%) scale(${sx}, ${sy}) rotate(${tilt}deg)`;
+}
+
 function renderChrome() {
   const rem = remainingSec();
   const shown = displaySeconds(rem);
   clockEl.textContent = formatClock(shown);
   clockEl.dataset.remaining = String(Math.round(rem * 1000) / 1000);
+  const prevLayout = document.body.dataset.layout || "setup";
+  const nextLayout = layoutMode();
+  const shouldFlip =
+    (prevLayout === "setup" && nextLayout === "focus") ||
+    (prevLayout === "focus" && nextLayout === "setup");
+  const first = shouldFlip ? clusterEl.getBoundingClientRect() : null;
   document.body.dataset.state = state;
+  document.body.dataset.layout = nextLayout;
   document.body.dataset.phase = phase();
+  if (first) {
+    const last = clusterEl.getBoundingClientRect();
+    if (last.width > 0 && first.width > 0) runFlip(first, last);
+  }
+  if (nextLayout === "end" && prevLayout !== "end") startHeroPlay();
+  if (nextLayout !== "end" && prevLayout === "end") stopHeroPlay();
+  endScreenEl.setAttribute("aria-hidden", nextLayout === "end" ? "false" : "true");
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.content = theme === "dark" ? "#000000" : "#ffffff";
 
   if (state === "done") {
     subEl.hidden = true;
-    doneEl.hidden = false;
+    doneEl.hidden = true;
   } else {
     subEl.hidden = false;
     doneEl.hidden = true;
@@ -726,22 +921,23 @@ function finish() {
   state = "done";
   virtual = endVirtual;
   for (const b of bots) {
-    if (b.state === "air" || b.state === "falling") b.state = "landed";
+    if (b.state === "refill") {
+      setEyes(b, { eye: BOT_EYE, fill: b.fill });
+      b.svg.style.opacity = "1";
+    }
+    if (b.state === "air" || b.state === "falling" || b.state === "refill") {
+      b.state = "landed";
+      b.svg.classList.remove("falling");
+    }
   }
   layoutLanded();
   for (const b of bots) {
-    if (b.state !== "refill") {
-      b.x = b.hx;
-      b.y = b.hy;
-    }
+    b.x = b.hx;
+    b.y = b.hy;
   }
   worldEl.classList.remove("hop");
   void worldEl.offsetWidth;
   worldEl.classList.add("hop");
-  heroEl.classList.remove("cheer");
-  void heroEl.offsetWidth;
-  heroEl.classList.add("cheer");
-  setLabel("TIME'S UP", { freeze: true });
   bubbleEl.hidden = true;
   line = null;
   chime();
@@ -811,6 +1007,26 @@ function shift(ms) {
   renderChrome();
 }
 
+function restart() {
+  stopHeroPlay();
+  setLabel(label, { freeze: false });
+  state = "idle";
+  virtual = 0;
+  endVirtual = 0;
+  runSpan = armed;
+  confettiAt = 0;
+  confettiSpawned = false;
+  rebuild();
+  virtual = 0;
+  endVirtual = armed * 1000;
+  runSpan = armed;
+  scheduleAir();
+  say("on it.");
+  state = "running";
+  if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
+  renderChrome();
+}
+
 function startOrPause() {
   if (state === "running") {
     state = "paused";
@@ -818,9 +1034,8 @@ function startOrPause() {
     return;
   }
   if (state === "done") {
-    setLabel(label, { freeze: false });
-    state = "idle";
-    rebuild();
+    restart();
+    return;
   }
   if (state === "idle") {
     virtual = 0;
@@ -835,6 +1050,7 @@ function startOrPause() {
 }
 
 function reset() {
+  stopHeroPlay();
   state = "idle";
   virtual = 0;
   endVirtual = 0;
@@ -936,6 +1152,7 @@ function loop(ts) {
   } else {
     tickMotion();
   }
+  if (state === "done") tickPlay(dt);
   for (const d of decorBots) d.readCenter?.();
   paintGaze();
   tickConfetti(dt);
@@ -1026,15 +1243,26 @@ focusResetBtn.addEventListener("click", (e) => {
 window.addEventListener("pointermove", revealDock);
 window.addEventListener("pointerdown", revealDock);
 
+$("restart").addEventListener("click", restart);
+$("new-timer").addEventListener("click", reset);
+
 window.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && (state === "running" || state === "paused")) {
+  const tag = document.activeElement?.tagName;
+  const typing = tag === "INPUT" || tag === "TEXTAREA" || document.activeElement?.isContentEditable;
+  if (e.key === "Escape" && state !== "idle") {
+    if (typing) return;
     e.preventDefault();
     reset();
     return;
   }
-  if (e.key !== " " && e.code !== "Space") return;
-  const tag = document.activeElement?.tagName;
-  if (tag === "INPUT" || tag === "TEXTAREA" || document.activeElement?.isContentEditable) return;
+  if (typing || tag === "BUTTON") return;
+  const space = e.key === " " || e.code === "Space";
+  if (state === "done" && (space || e.key === "Enter")) {
+    e.preventDefault();
+    restart();
+    return;
+  }
+  if (!space) return;
   e.preventDefault();
   startOrPause();
 });

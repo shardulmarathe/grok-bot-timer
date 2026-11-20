@@ -82,7 +82,8 @@ button, input { font-family: inherit; }
 
 #decor { z-index: 0; }
 #world { z-index: 1; }
-#confetti { z-index: 4; }
+#confetti { z-index: 3; }
+#play-layer { z-index: 4; }
 
 .bot {
   position: absolute;
@@ -114,7 +115,14 @@ body[data-state="paused"] .eyebrow,
 body[data-state="paused"] .sub,
 body[data-state="paused"] .bubble,
 body[data-state="paused"] .controls,
-body[data-state="paused"] #decor {
+body[data-state="paused"] #decor,
+body[data-state="done"] .top,
+body[data-state="done"] .eyebrow,
+body[data-state="done"] .sub,
+body[data-state="done"] .bubble,
+body[data-state="done"] .controls,
+body[data-state="done"] #decor,
+body[data-state="done"] .done-line {
   opacity: 0;
   pointer-events: none;
 }
@@ -207,26 +215,67 @@ body[data-state="paused"] #focus-dock {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: clamp(8px, 2vw, 28px);
+}
+
+.clock-cluster {
+  --hero-size: clamp(84px, 14vw, 156px);
+  --clock-gap: clamp(8px, 2vw, 28px);
+  --digit-size: clamp(64px, 13vw, 148px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--clock-gap);
+  transform-origin: center center;
+  will-change: transform;
 }
 
 .digits {
   margin: 0;
   font-family: "Universal Sans Display", Inter, sans-serif;
   font-weight: 500;
-  font-size: clamp(64px, 13vw, 148px);
+  font-size: var(--digit-size);
   line-height: 0.88;
   letter-spacing: -0.045em;
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum" 1;
   color: var(--digit);
+  white-space: nowrap;
+  position: relative;
+  z-index: 2;
 }
 
 .hero-wrap {
   position: relative;
   flex: none;
-  width: clamp(84px, 14vw, 156px);
-  height: clamp(84px, 14vw, 156px);
+  width: var(--hero-size);
+  height: var(--hero-size);
+  z-index: 2;
+}
+
+body[data-layout="focus"] .clock-row,
+body[data-layout="end"] .clock-row {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  margin: 0;
+  pointer-events: none;
+}
+
+body[data-layout="focus"] .clock-cluster,
+body[data-layout="end"] .clock-cluster {
+  --hero-size: clamp(128px, 15vw, 196px);
+  --digit-size: clamp(112px, 16vw, 220px);
+  margin-left: calc(var(--hero-size) + var(--clock-gap));
+}
+
+body[data-layout="end"] .clock-cluster {
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.35s ease, visibility 0s linear 0.35s;
+}
+
+body[data-layout="focus"] .clock-cluster {
+  opacity: 1;
 }
 
 .hero, .hero svg {
@@ -374,6 +423,62 @@ body[data-state="paused"] #focus-dock {
 
 #world.hop { animation: pilehop 0.52s cubic-bezier(0.2, 0.8, 0.2, 1); }
 
+#play-layer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+#play-layer .hero {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 168px;
+  height: 168px;
+  transform-origin: center center;
+}
+
+.end-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 32px;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.45s ease, visibility 0s linear 0.45s;
+}
+
+body[data-layout="end"] .end-screen {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition: opacity 0.45s ease;
+}
+
+.end-title {
+  margin: 0;
+  font-family: "Universal Sans Display", Inter, sans-serif;
+  font-weight: 500;
+  font-size: clamp(64px, 10vw, 128px);
+  line-height: 0.95;
+  letter-spacing: -0.045em;
+  color: var(--ink);
+  text-align: center;
+}
+
+.end-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
 body[data-phase="warn"] { --digit: var(--orange); --eyebrow: var(--orange); }
 body[data-phase="final"] { --digit: var(--pink); --eyebrow: var(--pink); }
 body[data-phase="done"] { --digit: var(--ink); --eyebrow: var(--purple); }
@@ -407,8 +512,16 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 @media (max-width: 640px) {
   .ui { padding: 16px 14px 34vh; }
   .stage { margin-top: 4vh; }
-  .digits { font-size: clamp(56px, 18vw, 88px); }
-  .hero-wrap { width: 76px; height: 76px; }
+  .clock-cluster {
+    --hero-size: 76px;
+    --digit-size: clamp(56px, 18vw, 88px);
+  }
+  body[data-layout="focus"] .clock-cluster,
+  body[data-layout="end"] .clock-cluster {
+    --hero-size: 96px;
+    --digit-size: clamp(72px, 20vw, 104px);
+  }
+  #play-layer .hero { width: 112px; height: 112px; }
   .bubble {
     left: 50%;
     bottom: auto;
@@ -420,4 +533,7 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 
 @media (prefers-reduced-motion: reduce) {
   .hero.cheer, #world.hop { animation: none; }
+  .top, .eyebrow, .sub, .bubble, .controls, #decor, .end-screen, .clock-cluster {
+    transition-duration: 0.2s;
+  }
 }
