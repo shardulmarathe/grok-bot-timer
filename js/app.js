@@ -160,11 +160,14 @@ function showHint(text) {
 const BOT_EYE = "#FFFFFF";
 const FALL_LEAD = 1800;
 
+const PILE_SCALE = 1.5;
+
 function pickSize(total) {
   const n = total || 20;
   const scale = n <= 30 ? 1 : n <= 80 ? 0.68 : n <= 160 ? 0.48 : 0.36;
   const spread = n <= 30 ? 38 : 20;
-  return Math.max(14, Math.round((24 + Math.random() * spread) * scale));
+  const base = Math.max(14, Math.round((24 + Math.random() * spread) * scale));
+  return Math.round(base * PILE_SCALE);
 }
 
 function mixHex(from, to, t) {
@@ -237,48 +240,71 @@ function arrivalPoint() {
   return clockCenter();
 }
 
-/** Wide sticker mound. The first row sits on baseY; later rows stack upward and may leave the frame. */
-function layoutMound(list, baseY, margin = 0) {
+/** Mound along the bottom. Rows stay inside the screen and below the centered timer. */
+function layoutMound(list, floorY, margin = 14) {
   if (!list.length) return;
   const sorted = [...list].sort((a, b) => b.size - a.size || a.id - b.id);
-  const maxW = Math.min(Math.max(140, width - margin * 2), 640);
-  let y = baseY;
+  const maxW = Math.max(160, width - margin * 2);
+  const rows = [];
   let i = 0;
   let row = 0;
   while (i < sorted.length) {
-    const budget = maxW * Math.max(0.46, 1 - row * 0.08);
+    const budget = maxW * Math.max(0.55, 1 - row * 0.06);
     const rowBots = [];
     let used = 0;
     while (i < sorted.length) {
       const b = sorted[i];
-      const need = b.size * 0.68;
+      const need = b.size * 0.74;
       if (rowBots.length && used + need > budget) break;
       rowBots.push(b);
       used += need;
       i++;
     }
-    let x = width / 2 - used / 2;
-    const rowH = Math.max(...rowBots.map((b) => b.size));
-    for (const b of rowBots) {
-      b.hx = x + b.size * 0.34 + Math.sin(b.id * 1.7) * 4;
-      b.hy = y + Math.cos(b.id * 2.1) * 3;
-      x += b.size * 0.68;
-    }
-    y -= rowH * 0.52;
+    rows.push({ bots: rowBots, used, h: Math.max(...rowBots.map((b) => b.size)) });
     row++;
+  }
+  const placed = [];
+  let floor = floorY;
+  for (const r of rows) {
+    let x = width / 2 - r.used / 2;
+    for (const b of r.bots) {
+      const inset = b.size * 0.66 + 4;
+      let hx = x + b.size * 0.37 + Math.sin(b.id * 1.7) * 3;
+      hx = Math.max(inset, Math.min(width - inset, hx));
+      const hy = floor - b.size / 2 + Math.cos(b.id * 2.1) * 2;
+      placed.push({ b, hx, hy, bottom: hy + b.size / 2 });
+      x += b.size * 0.74;
+    }
+    floor -= r.h * 0.56;
+  }
+  const limitTop = height * 0.64;
+  const pileTop = Math.min(...placed.map((p) => p.hy - p.b.size / 2));
+  if (pileTop < limitTop) {
+    const span = Math.max(1, floorY - pileTop);
+    const scale = Math.max(0.15, (floorY - limitTop) / span);
+    for (const p of placed) {
+      const dist = floorY - p.bottom;
+      p.hy = floorY - dist * scale - p.b.size / 2;
+    }
+  }
+  for (const p of placed) {
+    const inset = p.b.size * 0.66 + 4;
+    p.b.hx = Math.max(inset, Math.min(width - inset, p.hx));
+    p.b.hy = Math.max(inset, Math.min(height - inset, p.hy));
   }
 }
 
-/** Pack the source pile in a band under the header so it stays on screen. */
+/** Pack the source pile under the header. The top row stays fully on screen. */
 function layoutBand(list, top, bottom) {
   if (!list.length) return;
+  const margin = width < 720 ? 8 : 16;
+  const maxW = Math.max(140, width - margin * 2);
   const sorted = [...list].sort((a, b) => a.id - b.id);
-  const maxW = Math.max(160, width - (width < 720 ? 28 : 48));
   const rows = [];
   let row = [];
   let used = 0;
   for (const b of sorted) {
-    const need = b.size * 0.84;
+    const need = b.size * 0.8;
     if (row.length && used + need > maxW) {
       rows.push({ bots: row, used, h: Math.max(...row.map((x) => x.size)) });
       row = [];
@@ -288,25 +314,29 @@ function layoutBand(list, top, bottom) {
     used += need;
   }
   if (row.length) rows.push({ bots: row, used, h: Math.max(...row.map((x) => x.size)) });
-  const natural = rows.reduce((sum, r) => sum + r.h * 0.78, 0);
-  const band = Math.max(40, bottom - top);
-  const fit = natural > band ? band / natural : 1;
-  let y = top;
-  for (const r of rows) {
+  const stepRatio = 0.46;
+  const content = rows.slice(0, -1).reduce((sum, r) => sum + r.h * stepRatio, 0);
+  const band = Math.max(36, bottom - top);
+  const fit = content > band ? band / content : 1;
+  let rowTop = top;
+  rows.forEach((r, i) => {
     let x = width / 2 - r.used / 2;
     for (const b of r.bots) {
-      b.hx = x + b.size * 0.4;
-      b.hy = y + r.h * 0.32 * fit;
-      x += b.size * 0.84;
+      const inset = b.size * 0.66 + 4;
+      let hx = x + b.size * 0.4;
+      hx = Math.max(inset, Math.min(width - inset, hx));
+      b.hx = hx;
+      b.hy = rowTop + b.size / 2;
+      x += b.size * 0.8;
     }
-    y += r.h * 0.78 * fit;
-  }
+    if (i < rows.length - 1) rowTop += Math.max(8, r.h * stepRatio * fit);
+  });
 }
 
 function layoutAir(fresh) {
   const air = bots.filter((b) => b.state === "air" || b.state === "refill");
-  const top = width < 720 ? 48 : 62;
-  const bottom = width < 720 ? 132 : Math.min(176, height * 0.2);
+  const top = width < 720 ? 28 : 46;
+  const bottom = width < 720 ? Math.min(188, height * 0.26) : Math.min(220, height * 0.26);
   layoutBand(air, top, bottom);
   if (fresh) {
     for (const b of air) {
@@ -319,7 +349,7 @@ function layoutAir(fresh) {
 function layoutLanded() {
   layoutMound(
     bots.filter((b) => b.state === "landed"),
-    height - 6,
+    height - 12,
   );
 }
 
@@ -465,7 +495,7 @@ function startFall(bot) {
   bot.lane = bot.id % 2 === 0 ? 0.12 : 0.88;
   const landed = bots.filter((b) => b.state === "landed");
   const prev = landed.map((b) => ({ b, x: b.x, y: b.y }));
-  layoutMound([...landed, bot], height - 6);
+  layoutMound([...landed, bot], height - 12);
   bot.tx = bot.hx;
   bot.ty = bot.hy;
   bot.sx = sx;
