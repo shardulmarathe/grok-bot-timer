@@ -131,12 +131,23 @@ function showHint(text) {
   hintEl.textContent = text || "";
 }
 
-function pickSize() {
-  const r = Math.random();
-  if (r < 0.18) return 30 + Math.random() * 8;
-  if (r < 0.72) return 42 + Math.random() * 18;
-  if (r < 0.92) return 64 + Math.random() * 14;
-  return 82 + Math.random() * 12;
+const BOT_EYE = "#FFFFFF";
+const FALL_LEAD = 1800;
+
+function pickSize(total) {
+  const n = total || 20;
+  const scale = n <= 30 ? 1 : n <= 80 ? 0.68 : n <= 160 ? 0.48 : 0.36;
+  const spread = n <= 30 ? 38 : 20;
+  return Math.max(14, Math.round((24 + Math.random() * spread) * scale));
+}
+
+function mixHex(from, to, t) {
+  const parse = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  const a = parse(from);
+  const b = parse(to);
+  return `#${a
+    .map((v, i) => Math.round(v + (b[i] - v) * t).toString(16).padStart(2, "0"))
+    .join("")}`;
 }
 
 function mount(parent, spec, extra = {}) {
@@ -232,10 +243,45 @@ function layoutMound(list, baseY, margin = 0) {
   }
 }
 
+/** Pack the source pile in a band under the header so it stays on screen. */
+function layoutBand(list, top, bottom) {
+  if (!list.length) return;
+  const sorted = [...list].sort((a, b) => a.id - b.id);
+  const maxW = Math.max(160, width - (width < 720 ? 28 : 48));
+  const rows = [];
+  let row = [];
+  let used = 0;
+  for (const b of sorted) {
+    const need = b.size * 0.84;
+    if (row.length && used + need > maxW) {
+      rows.push({ bots: row, used, h: Math.max(...row.map((x) => x.size)) });
+      row = [];
+      used = 0;
+    }
+    row.push(b);
+    used += need;
+  }
+  if (row.length) rows.push({ bots: row, used, h: Math.max(...row.map((x) => x.size)) });
+  const natural = rows.reduce((sum, r) => sum + r.h * 0.78, 0);
+  const band = Math.max(40, bottom - top);
+  const fit = natural > band ? band / natural : 1;
+  let y = top;
+  for (const r of rows) {
+    let x = width / 2 - r.used / 2;
+    for (const b of r.bots) {
+      b.hx = x + b.size * 0.4;
+      b.hy = y + r.h * 0.32 * fit;
+      x += b.size * 0.84;
+    }
+    y += r.h * 0.78 * fit;
+  }
+}
+
 function layoutAir(fresh) {
-  const air = bots.filter((b) => b.state === "air");
-  const narrow = width < 720;
-  layoutMound(air, narrow ? -42 : 26, narrow ? 118 : 20);
+  const air = bots.filter((b) => b.state === "air" || b.state === "refill");
+  const top = width < 720 ? 48 : 62;
+  const bottom = width < 720 ? 132 : Math.min(176, height * 0.2);
+  layoutBand(air, top, bottom);
   if (fresh) {
     for (const b of air) {
       b.x = b.hx;
@@ -251,13 +297,13 @@ function layoutLanded() {
   );
 }
 
-function makePileBot(index, { fromAbove = false } = {}) {
+function makePileBot(index, { fromAbove = false, total } = {}) {
   const spec = PALETTE[index % PALETTE.length];
   const rotSign = Math.random() < 0.5 ? -1 : 1;
   const rot = rotSign * (8 + Math.random() * 14);
-  const bot = mount(worldEl, { kind: spec.kind, fill: spec.fill, dash: !!spec.dash, eye: "#FFFFFF" }, {
+  const bot = mount(worldEl, { kind: spec.kind, fill: spec.fill, dash: !!spec.dash, eye: BOT_EYE }, {
     id: nextId++,
-    size: pickSize(),
+    size: pickSize(total || botCountFor(Math.max(armed, runSpan, 12))),
     rot,
     state: "air",
     blinkStart: 0,
@@ -285,7 +331,7 @@ function rebuild() {
   worldEl.classList.remove("hop");
   heroEl.classList.remove("cheer");
   const n = botCountFor(armed);
-  for (let i = 0; i < n; i++) bots.push(makePileBot(i));
+  for (let i = 0; i < n; i++) bots.push(makePileBot(i, { total: n }));
   layoutAir(true);
   lastLanded = null;
   line = null;
@@ -354,12 +400,43 @@ function scheduleAir() {
   });
 }
 
+function spawnRefill(slot) {
+  if (remainingSec() < 5) return;
+  const bot = mount(worldEl, { kind: slot.kind, fill: "#161616", dash: !!slot.dash, eye: BOT_EYE }, {
+    id: nextId++,
+    size: slot.size,
+    rot: slot.rot,
+    state: "refill",
+    blinkStart: 0,
+    nextBlink: virtual + 2000 + Math.random() * 4000,
+  });
+  bot.fill = slot.fill;
+  bot.hx = slot.hx;
+  bot.hy = slot.hy;
+  bot.x = slot.hx;
+  bot.y = slot.hy;
+  bot.refillStart = virtual;
+  bot.svg.style.opacity = "0.22";
+  bots.push(bot);
+}
+
 function startFall(bot) {
   const sx = bot.x;
   const sy = bot.y;
+  const slot = {
+    hx: bot.hx,
+    hy: bot.hy,
+    size: bot.size,
+    rot: bot.rot,
+    kind: bot.kind,
+    fill: bot.fill,
+    dash: bot.dash,
+  };
   bot.state = "falling";
+  bot.svg.classList.add("falling");
   bot.fallStart = virtual;
-  bot.fallDur = Math.max(180, bot.landAt - virtual);
+  bot.fallDur = Math.max(220, bot.landAt - virtual);
+  bot.lane = bot.id % 2 === 0 ? 0.12 : 0.88;
   const landed = bots.filter((b) => b.state === "landed");
   const prev = landed.map((b) => ({ b, x: b.x, y: b.y }));
   layoutMound([...landed, bot], height - 6);
@@ -373,13 +450,34 @@ function startFall(bot) {
     s.b.x = s.x;
     s.b.y = s.y;
   }
-  layoutAir(false);
+  spawnRefill(slot);
+}
+
+function fallPosition(bot, u) {
+  const laneX = width * bot.lane;
+  const dropY = Math.min(height * 0.8, bot.ty - 10);
+  let x;
+  let y;
+  if (u < 0.18) {
+    const k = u / 0.18;
+    x = bot.sx + (laneX - bot.sx) * k;
+    y = bot.sy + 24 * k;
+  } else if (u < 0.78) {
+    const k = (u - 0.18) / 0.6;
+    x = laneX;
+    y = bot.sy + 24 + (dropY - (bot.sy + 24)) * k;
+  } else {
+    const k = (u - 0.78) / 0.22;
+    x = laneX + (bot.tx - laneX) * k;
+    y = dropY + (bot.ty - dropY) * k;
+  }
+  return { x, y };
 }
 
 function tickMotion() {
   const air = bots.filter((b) => b.state === "air");
   for (const bot of air) {
-    if (state === "running" && bot.landAt != null && virtual + 900 >= bot.landAt) {
+    if (state === "running" && bot.landAt != null && virtual + FALL_LEAD >= bot.landAt) {
       startFall(bot);
       continue;
     }
@@ -389,12 +487,12 @@ function tickMotion() {
   for (const bot of bots) {
     if (bot.state === "falling") {
       const t = Math.min(1, (virtual - bot.fallStart) / bot.fallDur);
-      const ease = t * t * (3 - 2 * t);
-      const drop = 1 - Math.pow(1 - t, 2.15);
-      bot.x = bot.sx + (bot.tx - bot.sx) * ease;
-      bot.y = bot.sy + (bot.ty - bot.sy) * drop;
+      const pos = fallPosition(bot, t);
+      bot.x = pos.x;
+      bot.y = pos.y;
       if (t >= 1) {
         bot.state = "landed";
+        bot.svg.classList.remove("falling");
         bot.x = bot.tx;
         bot.y = bot.ty;
         bot.hx = bot.tx;
@@ -428,12 +526,24 @@ function paintGaze() {
     else if (bot.state === "falling") target = { x: bot.tx, y: bot.ty };
     else if (bot.state === "air") target = center;
     const g = gazeVector(bot.x, bot.y, target.x, target.y);
-    setEyes(bot, { gazeX: g.x, gazeY: g.y, blink: blinkScale(bot) });
+    setEyes(bot, { gazeX: g.x, gazeY: g.y, blink: blinkScale(bot), eye: BOT_EYE });
+    if (bot.state === "refill" && bot.refillStart != null) {
+      const p = Math.min(1, (virtual - bot.refillStart) / 1000);
+      const ease = 1 - Math.pow(1 - p, 2);
+      bot.svg.style.opacity = String(0.22 + 0.78 * ease);
+      setEyes(bot, {
+        gazeX: g.x,
+        gazeY: g.y,
+        blink: blinkScale(bot),
+        eye: BOT_EYE,
+        fill: mixHex("#141414", bot.fill, ease),
+      });
+    }
     place(bot);
   }
   for (const bot of decorBots) {
     const g = gazeVector(bot.cx, bot.cy, center.x, center.y);
-    setEyes(bot, { gazeX: g.x, gazeY: g.y, blink: blinkScale(bot) });
+    setEyes(bot, { gazeX: g.x, gazeY: g.y, blink: blinkScale(bot), eye: BOT_EYE });
   }
   if (hero) {
     const target = lastLanded
@@ -567,7 +677,7 @@ function spawnConfetti() {
   for (let i = 0; i < n; i++) {
     const spec = PALETTE[i % PALETTE.length];
     const src = sources.length ? sources[i % sources.length] : { x: width / 2, y: height - 40 };
-    const bot = mount(confettiEl, { kind: spec.kind, fill: spec.fill, dash: !!spec.dash, eye: "#FFFFFF" }, {
+    const bot = mount(confettiEl, { kind: spec.kind, fill: spec.fill, dash: !!spec.dash, eye: BOT_EYE }, {
       id: nextId++,
       size: 10 + Math.random() * 12,
       rot: Math.random() * 40 - 20,
@@ -614,14 +724,14 @@ function finish() {
   state = "done";
   virtual = endVirtual;
   for (const b of bots) {
-    if (b.state !== "landed") {
-      b.state = "landed";
-    }
+    if (b.state === "air" || b.state === "falling") b.state = "landed";
   }
   layoutLanded();
   for (const b of bots) {
-    b.x = b.hx;
-    b.y = b.hy;
+    if (b.state !== "refill") {
+      b.x = b.hx;
+      b.y = b.hy;
+    }
   }
   worldEl.classList.remove("hop");
   void worldEl.offsetWidth;
@@ -747,7 +857,7 @@ function buildDecor() {
   decorBots = [];
   const small = window.innerWidth < 720;
   DECOR.forEach((spec, i) => {
-    const bot = mount(decorEl, { kind: spec.kind, fill: spec.fill, dash: !!spec.dash, eye: "#FFFFFF" }, {
+    const bot = mount(decorEl, { kind: spec.kind, fill: spec.fill, dash: !!spec.dash, eye: BOT_EYE }, {
       id: 1000 + i,
       size: small ? spec.size * 0.62 : spec.size,
       rot: spec.rot,

@@ -74,13 +74,13 @@ export function displaySeconds(remaining) {
 }
 
 /**
- * Bot count grows with the square root of the duration so a 2 hour
- * timer stays a mound, not a blizzard. The last of these bots is
- * scheduled to land at 0:00.
+ * One bot every ~3 seconds, so a drop is always in view.
+ * The last of these bots is scheduled to land at 0:00.
+ * Capped so a long timer stays a mound of smaller stickers.
  */
 export function botCountFor(seconds) {
-  const n = Math.round(6 + Math.sqrt(Math.max(1, seconds)) * 1.55);
-  return Math.max(6, Math.min(64, n));
+  const n = Math.round(Math.max(1, seconds) / 3);
+  return Math.max(2, Math.min(300, n));
 }
 
 /** Shareable ?t= value, e.g. 10m, 1h30m, 45s. */

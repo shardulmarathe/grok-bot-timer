@@ -85,13 +85,15 @@ function bodyMarkup(kind, fill) {
   }
 }
 
-function eyeMarkup(dash) {
+/** Two solid pills. No pupil, dot, stroke, or inner highlight. */
+function eyeMarkup(dash, eye) {
+  const paint = `fill="${eye}" stroke="none"`;
   if (dash) {
-    return `<rect class="e" x="-14" y="-1.7" width="11" height="3.4" rx="1.7"/>
-            <rect class="e" x="3.2" y="-1.7" width="11" height="3.4" rx="1.7"/>`;
+    return `<rect class="e" ${paint} x="-14" y="-1.7" width="11" height="3.4" rx="1.7"/>
+            <rect class="e" ${paint} x="3.2" y="-1.7" width="11" height="3.4" rx="1.7"/>`;
   }
-  return `<rect class="e" x="-13.4" y="-11" width="8.2" height="22" rx="4.1"/>
-          <rect class="e" x="5.2" y="-11" width="8.2" height="22" rx="4.1"/>`;
+  return `<rect class="e" ${paint} x="-13.4" y="-11" width="8.2" height="22" rx="4.1"/>
+          <rect class="e" ${paint} x="5.2" y="-11" width="8.2" height="22" rx="4.1"/>`;
 }
 
 /**
@@ -103,7 +105,7 @@ export function createBotElement({ kind, fill, dash = false, eye = "#FFFFFF" }) 
   const html = `<svg xmlns="${SVG_NS}" viewBox="0 0 120 120" aria-hidden="true">
     <g class="body">${bodyMarkup(kind, fill)}</g>
     <g class="eyes">
-      <g class="spin">${eyeMarkup(dash)}</g>
+      <g class="spin">${eyeMarkup(dash, eye)}</g>
     </g>
   </svg>`;
   const wrap = document.createElement("div");

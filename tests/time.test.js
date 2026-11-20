@@ -41,13 +41,12 @@ test("clock format matches the hourglass face", () => {
   assert.equal(displaySeconds(0.2), 1);
 });
 
-test("bot count grows with duration and stays capped", () => {
-  const tenSec = botCountFor(10);
-  const tenMin = botCountFor(600);
-  const twoHour = botCountFor(7200);
-  assert.ok(tenSec >= 6 && tenSec < tenMin);
-  assert.ok(tenMin > tenSec && tenMin <= 64);
-  assert.equal(twoHour, 64);
+test("bot count drops about one bot every three seconds", () => {
+  assert.equal(botCountFor(60), 20);
+  assert.equal(botCountFor(600), 200);
+  assert.equal(botCountFor(7200), 300);
+  assert.ok(botCountFor(10) < botCountFor(60));
+  assert.ok(botCountFor(60) >= 15);
 });
 
 test("the last landing time is exactly the end", () => {

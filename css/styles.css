@@ -92,6 +92,8 @@ button, input { font-family: inherit; }
   will-change: transform;
 }
 
+.bot.falling { z-index: 3; }
+
 .ui {
   position: relative;
   z-index: 2;

@@ -44,7 +44,7 @@ The eyebrow above the clock is editable. It remembers what you wrote.
 
 The last duration, label, and theme are stored in the browser. A URL parameter wins over that memory.
 
-Bot count grows with the square root of the duration and caps at 64, so a two-hour timer stays a mound.
+A bot drops about every 3 seconds (capped at 300). Each one that leaves the top is replaced by a silhouette that fades into a full bot, until the last few seconds.
 
 At zero the pile hops, confetti made of tiny bots bursts, a chime plays, and the line reads “Build something that works.”
 
