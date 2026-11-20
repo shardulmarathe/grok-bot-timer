@@ -7,7 +7,7 @@ import {
   toParam,
   formatEndTime,
 } from "./time.js";
-import { createBotElement, setEyes, PALETTE } from "./shapes.js";
+import { createBotElement, setEyes, setHeroLevel, PALETTE } from "./shapes.js";
 
 const STORE_KEY = "grok-bot-timer";
 
@@ -34,6 +34,12 @@ const ssEl = $("ss");
 const typedEl = $("typed");
 
 let theme = "light";
+let mode = "timer";
+let soundOn = false;
+let alarmHHMM = "16:30";
+let timerSeconds = 600;
+let laps = [];
+let nextCatch = 4000;
 let label = "BUILD TIME";
 let labelFrozen = false;
 let armed = 600;
@@ -94,7 +100,7 @@ function save() {
   try {
     localStorage.setItem(
       STORE_KEY,
-      JSON.stringify({ seconds: armed, label, theme }),
+      JSON.stringify({ seconds: timerSeconds, label, theme, sound: soundOn, mode, alarm: alarmHHMM }),
     );
   } catch {
     /* private mode */
@@ -103,13 +109,55 @@ function save() {
 
 function updateUrl() {
   const url = new URL(location.href);
-  url.searchParams.set("t", toParam(armed));
+  url.searchParams.delete("t");
+  url.searchParams.delete("mode");
+  url.searchParams.delete("alarm");
+  if (mode === "stopwatch") url.searchParams.set("mode", "stopwatch");
+  else if (mode === "alarm") url.searchParams.set("alarm", alarmHHMM);
+  else url.searchParams.set("t", toParam(timerSeconds));
   history.replaceState(null, "", url);
 }
 
+function parseAlarm(raw) {
+  const m = String(raw || "").trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (h > 23 || min > 59) return null;
+  return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
+}
+
+function alarmDate(hhmm = alarmHHMM) {
+  const [h, min] = hhmm.split(":").map(Number);
+  const d = new Date();
+  d.setSeconds(0, 0);
+  d.setHours(h, min, 0, 0);
+  if (d.getTime() <= Date.now() + 400) d.setDate(d.getDate() + 1);
+  return d;
+}
+
+function secondsUntilAlarm() {
+  return Math.max(1, Math.round((alarmDate().getTime() - Date.now()) / 1000));
+}
+
 function remainingSec() {
+  if (mode === "stopwatch") return Infinity;
+  if (mode === "alarm" && state === "idle") return secondsUntilAlarm();
   if (state === "idle") return armed;
   return Math.max(0, (endVirtual - virtual) / 1000);
+}
+
+function displayValue() {
+  if (mode === "stopwatch") return state === "idle" ? 0 : virtual / 1000;
+  return remainingSec();
+}
+
+function timeProgress() {
+  if (mode === "stopwatch") return 0;
+  if (state === "done") return 1;
+  if (state === "idle") return 0;
+  const total = Math.max(0.001, runSpan);
+  return Math.max(0, Math.min(1, elapsedSec() / total));
 }
 
 function elapsedSec() {
@@ -118,6 +166,7 @@ function elapsedSec() {
 }
 
 function phase() {
+  if (mode === "stopwatch") return "ok";
   if (state === "done") return "done";
   const r = remainingSec();
   if (state !== "idle" && r <= 60) return "final";
@@ -219,11 +268,26 @@ function splashScale(bot) {
 }
 
 function place(bot) {
+  if (bot.state === "caught") {
+    const wrap = heroWrapEl.getBoundingClientRect();
+    const bounce = Math.sin(Math.min(1, (bot.caughtT || 0) / 420) * Math.PI) * 16;
+    const lx = bot.handX - wrap.left;
+    const ly = bot.handY - wrap.top - bounce;
+    bot.svg.style.width = `${bot.size}px`;
+    bot.svg.style.height = `${bot.size}px`;
+    bot.svg.style.transform = `translate(${lx - bot.size / 2}px, ${ly - bot.size / 2}px) rotate(${bot.rot || 0}deg)`;
+    return;
+  }
   const bob = bot.state === "frame" ? Math.sin(motionClock / 620 + bot.id) * 3.4 : 0;
-  const sc = bot.state === "splash" ? splashScale(bot) : { sx: 1, sy: 1 };
+  const party = state === "done" && (bot.state === "frame" || bot.state === "landed");
+  const wave = party ? Math.sin(motionClock / (prefersReduced() ? 520 : 170) + bot.id * 0.65) * (prefersReduced() ? 3 : 14) : 0;
+  const spin = party && !prefersReduced() ? Math.sin(motionClock / 260 + bot.id) * 20 : 0;
+  const sc = bot.state === "splash" ? splashScale(bot) : bot.state === "pop"
+    ? { sx: Math.max(0.05, 1 - (bot.popT || 0) / 220), sy: Math.max(0.05, 1 - (bot.popT || 0) / 220) }
+    : { sx: 1, sy: 1 };
   bot.svg.style.width = `${bot.size}px`;
   bot.svg.style.height = `${bot.size}px`;
-  bot.svg.style.transform = `translate(${bot.x - bot.size / 2}px, ${bot.y + bob - bot.size / 2}px) rotate(${bot.rot || 0}deg) scale(${sc.sx}, ${sc.sy})`;
+  bot.svg.style.transform = `translate(${bot.x - bot.size / 2}px, ${bot.y + bob + wave - bot.size / 2}px) rotate(${(bot.rot || 0) + spin}deg) scale(${sc.sx}, ${sc.sy})`;
 }
 
 function gazeVector(fromX, fromY, toX, toY) {
@@ -470,6 +534,12 @@ function armRain() {
 
 function tickSpawn() {
   if (state !== "running" || finalQueued) return;
+  if (mode === "stopwatch") {
+    if (virtual < nextSpawnAt) return;
+    spawnDrop();
+    nextSpawnAt = virtual + 820 * (0.65 + Math.random() * 0.7);
+    return;
+  }
   const size = baseSize();
   const travel = predictFallMs(0.84, size);
   const finalAt = endVirtual - travel;
@@ -495,6 +565,34 @@ function startSplash(bot) {
   bot.vy = -Math.min(210, Math.abs(bot.vy) * 0.25);
   bot.svg.classList.remove("falling");
   lastLanded = bot;
+  boop();
+}
+
+function heroBox() {
+  const r = heroEl.getBoundingClientRect();
+  return { x: r.left + r.width / 2, y: r.top + r.height * 0.62, w: r.width, h: r.height, top: r.top, bottom: r.bottom };
+}
+
+function tryCatch(bot) {
+  if (state !== "running" || !catchReady()) return false;
+  const box = heroBox();
+  if (box.w < 8) return false;
+  if (Math.abs(bot.x - box.x) > box.w * 0.95) return false;
+  if (bot.y < box.top - 10 || bot.y > box.bottom + 24) return false;
+  bot.state = "caught";
+  bot.caughtT = 0;
+  bot.handX = box.x;
+  bot.handY = box.y + box.h * 0.08;
+  bot.svg.dataset.caught = "1";
+  bot.svg.classList.remove("falling");
+  heroWrapEl.appendChild(bot.svg);
+  nextCatch = motionClock + 6500 + Math.random() * 4500;
+  boop();
+  return true;
+}
+
+function catchReady() {
+  return motionClock > nextCatch;
 }
 
 function tickMotion(dt) {
@@ -507,7 +605,8 @@ function tickMotion(dt) {
       bot.vy += (bot.grav - bot.drag * bot.vy) * sec;
       bot.x += bot.vx * sec;
       bot.y += bot.vy * sec;
-      if (bot.final && virtual < endVirtual - 40 && bot.y > surfaceY(bot.x, bot.size) - 10) {
+      if (tryCatch(bot)) continue;
+      if (bot.final && mode !== "stopwatch" && virtual < endVirtual - 40 && bot.y > surfaceY(bot.x, bot.size) - 10) {
         bot.y = Math.min(bot.y, surfaceY(bot.x, bot.size) - 8);
         bot.vy = Math.min(bot.vy, 80);
       }
@@ -531,6 +630,29 @@ function tickMotion(dt) {
           layoutLanded();
         }
       }
+    } else if (bot.state === "caught" && sec > 0) {
+      bot.caughtT += dt;
+      const bounce = Math.sin(Math.min(1, bot.caughtT / 420) * Math.PI) * 22;
+      bot.x += (bot.handX - bot.x) * 0.34;
+      bot.y += (bot.handY - bounce - bot.y) * 0.34;
+      if (bot.caughtT > 900) {
+        worldEl.appendChild(bot.svg);
+        bot.x = bot.handX;
+        bot.y = bot.handY;
+        if (Math.random() < 0.35) {
+          bot.state = "pop";
+          bot.popT = 0;
+        } else {
+          bot.state = "landed";
+          bot.vy = 0;
+          bot.vx = 0;
+          layoutLanded();
+        }
+      }
+    } else if (bot.state === "pop") {
+      bot.popT = (bot.popT || 0) + dt;
+      bot.svg.style.opacity = String(Math.max(0, 1 - bot.popT / 220));
+      if (bot.popT > 220) bot.dead = true;
     } else if (bot.state === "landed" && sec > 0 && bot.hx != null) {
       const k = Math.min(1, dt / 170);
       bot.x += (bot.hx - bot.x) * k;
@@ -615,17 +737,33 @@ function paintGaze() {
     setEyes(bot, { gazeX: g.x, gazeY: g.y, blink: blinkScale(bot), eye: BOT_EYE });
   }
   if (hero) {
-    const clock = state === "done" ? playClock : virtual;
+    const clock = state === "done" ? playClock : motionClock;
+    const hr = heroEl.getBoundingClientRect();
+    const hx = hr.left + hr.width / 2;
+    const hy = hr.top + hr.height / 2;
+    let nearest = null;
+    let nearD = 520;
+    if (!heroPlaying) {
+      for (const b of bots) {
+        if (b.state !== "falling" && b.state !== "caught") continue;
+        const d = Math.hypot(b.x - hx, b.y - hy);
+        if (d < nearD) {
+          nearD = d;
+          nearest = b;
+        }
+      }
+    }
     const target = heroPlaying
       ? { x: play.tx, y: play.ty }
-      : lastLanded
-        ? { x: lastLanded.x, y: lastLanded.y }
-        : arrive;
-    const hr = heroEl.getBoundingClientRect();
-    const g = gazeVector(hr.left + hr.width / 2, hr.top + hr.height / 2, target.x, target.y);
+      : nearest
+        ? { x: nearest.x, y: nearest.y }
+        : lastLanded
+          ? { x: lastLanded.x, y: lastLanded.y }
+          : arrive;
+    const g = gazeVector(hx, hy, target.x, target.y);
     if (clock > hero.nextBlink) {
       hero.blinkStart = clock;
-      hero.nextBlink = clock + (state === "done" ? 900 : 2600) + Math.random() * (state === "done" ? 1400 : 3000);
+      hero.nextBlink = clock + (state === "running" ? 1400 : 2200) + Math.random() * 1600;
     }
     setEyes(hero, {
       gazeX: g.x,
@@ -634,6 +772,7 @@ function paintGaze() {
       eye: heroEye(),
       fill: heroFill(),
     });
+    setHeroLevel(hero, timeProgress());
   }
 }
 
@@ -731,6 +870,8 @@ function startHeroPlay() {
   playLayerEl.hidden = false;
   playLayerEl.setAttribute("aria-hidden", "false");
   playLayerEl.appendChild(heroEl);
+  play.ty = height * 0.72;
+  play.tx = width * (Math.random() < 0.5 ? 0.22 : 0.78);
   const playSize = Math.max(112, Math.min(156, box.width));
   heroEl.style.width = `${playSize}px`;
   heroEl.style.height = `${playSize}px`;
@@ -797,11 +938,52 @@ function tickPlay(dt) {
   heroEl.style.transform = `translate(${play.x}px, ${play.y - hop}px) translate(-50%, -50%) scale(${sx}, ${sy}) rotate(${tilt}deg)`;
 }
 
+function renderDigits(text) {
+  if (clockEl.dataset.face === text) return;
+  clockEl.dataset.face = text;
+  clockEl.replaceChildren(
+    ...[...text].map((ch) => {
+      const slot = document.createElement("span");
+      slot.className = ch === ":" ? "colon" : "slot";
+      slot.textContent = ch;
+      return slot;
+    }),
+  );
+}
+
+function applySketch(progress) {
+  const sketch = $("sketch");
+  if (!sketch) return;
+  const p = prefersReduced() ? (progress > 0.5 ? 1 : 0) : progress;
+  for (const el of sketch.querySelectorAll(".sk")) {
+    const len = Number(el.dataset.len || el.getTotalLength());
+    el.dataset.len = String(len);
+    el.style.strokeDasharray = String(len);
+    el.style.strokeDashoffset = String(len * (1 - p));
+  }
+  sketch.style.opacity = String(0.12 + 0.5 * p);
+}
+
+function renderLaps() {
+  const list = $("laps");
+  if (!list) return;
+  list.replaceChildren(
+    ...laps.map((sec, i) => {
+      const li = document.createElement("li");
+      li.textContent = `Lap ${laps.length - i}  ${formatClock(Math.floor(sec))}`;
+      return li;
+    }),
+  );
+}
+
 function renderChrome() {
-  const rem = remainingSec();
-  const shown = displaySeconds(rem);
-  clockEl.textContent = formatClock(shown);
-  clockEl.dataset.remaining = String(Math.round(rem * 1000) / 1000);
+  if (mode === "alarm" && state === "idle") armed = secondsUntilAlarm();
+  const shown = displaySeconds(displayValue());
+  renderDigits(formatClock(shown));
+  const rem = mode === "stopwatch" ? 0 : remainingSec();
+  clockEl.dataset.remaining = String(Math.round((mode === "stopwatch" ? displayValue() : rem) * 1000) / 1000);
+  applySketch(timeProgress());
+  document.body.dataset.mode = mode;
   const prevLayout = document.body.dataset.layout || "setup";
   const nextLayout = layoutMode();
   const shouldFlip =
@@ -827,8 +1009,17 @@ function renderChrome() {
   } else {
     subEl.hidden = false;
     doneEl.hidden = true;
-    const end = new Date(Date.now() + rem * 1000);
-    subEl.textContent = `Ends ${formatEndTime(end)}`;
+    if (mode === "alarm") subEl.textContent = `until ${formatEndTime(alarmDate())}`;
+    else if (mode === "stopwatch") subEl.textContent = laps.length ? `${laps.length} lap${laps.length === 1 ? "" : "s"}` : "Counting up";
+    else subEl.textContent = `Ends ${formatEndTime(new Date(Date.now() + remainingSec() * 1000))}`;
+  }
+  for (const btn of document.querySelectorAll(".modes button")) {
+    btn.setAttribute("aria-selected", btn.dataset.mode === mode ? "true" : "false");
+  }
+  const soundBtn = $("sound");
+  if (soundBtn) {
+    soundBtn.textContent = soundOn ? "Sound on" : "Sound off";
+    soundBtn.setAttribute("aria-pressed", soundOn ? "true" : "false");
   }
 
   const preset = String(state === "idle" ? armed : Math.round(rem));
@@ -838,7 +1029,7 @@ function renderChrome() {
   const focusLabel = state === "paused" ? "Resume" : "Pause";
   startBtn.textContent = state === "running" ? "Pause" : state === "paused" ? "Resume" : "Start";
   if (focusPauseBtn) focusPauseBtn.textContent = focusLabel;
-  fillSteppers(state === "idle" ? armed : rem);
+  if (mode === "timer") fillSteppers(state === "idle" ? armed : rem);
   counts();
   void preset;
 }
@@ -884,7 +1075,36 @@ function updateBubble() {
   }
 }
 
+function tone(freq, dur, gain) {
+  if (!soundOn) return;
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return;
+  try {
+    if (!audioCtx) audioCtx = new AC();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+    const now = audioCtx.currentTime;
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = "sine";
+    o.frequency.value = freq;
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.exponentialRampToValueAtTime(gain, now + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+    o.connect(g);
+    g.connect(audioCtx.destination);
+    o.start(now);
+    o.stop(now + dur + 0.02);
+  } catch {
+    /* autoplay blocked */
+  }
+}
+
+function boop() {
+  tone(620, 0.09, 0.035);
+}
+
 function chime() {
+  if (!soundOn) return;
   const AC = window.AudioContext || window.webkitAudioContext;
   if (!AC) return;
   try {
@@ -913,7 +1133,7 @@ function chime() {
 function spawnConfetti() {
   confettiSpawned = true;
   const sources = bots.filter((b) => b.state === "landed");
-  const n = 70;
+  const n = prefersReduced() ? 16 : 70;
   for (let i = 0; i < n; i++) {
     const spec = PALETTE[i % PALETTE.length];
     const src = sources.length ? sources[i % sources.length] : { x: width / 2, y: height - 40 };
@@ -998,6 +1218,7 @@ function commit(seconds, { runningRetarget = true } = {}) {
   }
   showHint("");
   armed = next;
+  if (mode === "timer") timerSeconds = armed;
   save();
   updateUrl();
   typedEl.value = "";
@@ -1066,8 +1287,19 @@ function restart() {
   confettiSpawned = false;
   rebuild();
   virtual = 0;
-  endVirtual = armed * 1000;
-  runSpan = armed;
+  if (mode === "stopwatch") {
+    endVirtual = Number.POSITIVE_INFINITY;
+    runSpan = 0;
+  } else if (mode === "alarm") {
+    armed = secondsUntilAlarm();
+    endVirtual = armed * 1000;
+    runSpan = armed;
+  } else {
+    armed = timerSeconds;
+    endVirtual = armed * 1000;
+    runSpan = armed;
+  }
+  nextCatch = motionClock + 2800;
   armRain();
   say("on it.");
   state = "running";
@@ -1087,8 +1319,20 @@ function startOrPause() {
   }
   if (state === "idle") {
     virtual = 0;
-    endVirtual = armed * 1000;
-    runSpan = armed;
+    laps = mode === "stopwatch" ? [] : laps;
+    if (mode === "stopwatch") {
+      endVirtual = Number.POSITIVE_INFINITY;
+      runSpan = 0;
+      renderLaps();
+    } else if (mode === "alarm") {
+      armed = secondsUntilAlarm();
+      endVirtual = armed * 1000;
+      runSpan = armed;
+    } else {
+      endVirtual = armed * 1000;
+      runSpan = armed;
+    }
+    nextCatch = motionClock + 2800;
     armRain();
     say("on it.");
   }
@@ -1141,15 +1385,31 @@ function buildHero() {
 
 function boot() {
   const stored = readStore();
-  const fromUrl = new URLSearchParams(location.search).get("t");
+  const params = new URLSearchParams(location.search);
+  const fromUrl = params.get("t");
+  const alarmParam = parseAlarm(params.get("alarm"));
   if (stored?.label) label = String(stored.label).slice(0, 32) || label;
   if (stored?.theme) theme = stored.theme === "dark" ? "dark" : "light";
+  if (stored?.sound) soundOn = true;
+  if (stored?.alarm) alarmHHMM = parseAlarm(stored.alarm) || alarmHHMM;
+  if (stored?.mode === "stopwatch" || stored?.mode === "alarm" || stored?.mode === "timer") mode = stored.mode;
   let seconds = stored?.seconds || 600;
   if (fromUrl) {
     const parsed = parseDuration(fromUrl, { bare: "seconds" });
     if (parsed) seconds = parsed;
   }
-  armed = clampDuration(seconds) || 600;
+  timerSeconds = clampDuration(seconds) || 600;
+  if (alarmParam) {
+    mode = "alarm";
+    alarmHHMM = alarmParam;
+  } else if (params.get("mode") === "stopwatch") {
+    mode = "stopwatch";
+  } else if (fromUrl) {
+    mode = "timer";
+  }
+  armed = mode === "alarm" ? secondsUntilAlarm() : timerSeconds;
+  const alarmInput = $("alarm-time");
+  if (alarmInput) alarmInput.value = alarmHHMM;
   runSpan = armed;
   setLabel(label, { freeze: false });
   applyTheme(theme);
@@ -1172,7 +1432,7 @@ function loop(ts) {
     tickSpawn();
     tickMotion(dt);
     updateBubble();
-    if (virtual >= endVirtual) finish();
+    if (mode !== "stopwatch" && virtual >= endVirtual) finish();
   } else {
     tickMotion(0);
   }
@@ -1185,7 +1445,61 @@ function loop(ts) {
   requestAnimationFrame(loop);
 }
 
+function setMode(next) {
+  if (state !== "idle") reset();
+  mode = next;
+  if (mode === "timer") armed = timerSeconds;
+  if (mode === "alarm") armed = secondsUntilAlarm();
+  if (mode === "stopwatch") {
+    laps = [];
+    renderLaps();
+  }
+  updateUrl();
+  save();
+  renderChrome();
+}
+
+function plusFive() {
+  stopHeroPlay();
+  if (mode === "alarm") {
+    const d = new Date(Date.now() + 5 * 60 * 1000);
+    alarmHHMM = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    const input = $("alarm-time");
+    if (input) input.value = alarmHHMM;
+  } else {
+    mode = "timer";
+    timerSeconds = clampDuration((timerSeconds || armed || 0) + 300) || 300;
+    armed = timerSeconds;
+  }
+  save();
+  restart();
+}
+
 themeBtn.addEventListener("click", () => applyTheme(theme === "dark" ? "light" : "dark"));
+$("sound").addEventListener("click", () => {
+  soundOn = !soundOn;
+  save();
+  if (soundOn) boop();
+  renderChrome();
+});
+for (const btn of document.querySelectorAll(".modes button")) {
+  btn.addEventListener("click", () => setMode(btn.dataset.mode));
+}
+$("alarm-time").addEventListener("input", () => {
+  const next = parseAlarm($("alarm-time").value);
+  if (!next) return;
+  alarmHHMM = next;
+  save();
+  updateUrl();
+  renderChrome();
+});
+$("lap").addEventListener("click", () => {
+  if (mode !== "stopwatch" || state !== "running") return;
+  laps.unshift(virtual / 1000);
+  renderLaps();
+  renderChrome();
+});
+$("plus-five").addEventListener("click", plusFive);
 startBtn.addEventListener("click", startOrPause);
 $("reset").addEventListener("click", reset);
 $("minus1").addEventListener("click", () => shift(-60_000));

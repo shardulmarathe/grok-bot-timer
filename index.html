@@ -12,6 +12,13 @@
     <meta name="theme-color" content="#ffffff" />
   </head>
   <body>
+    <svg id="sketch" viewBox="0 0 120 120" aria-hidden="true">
+      <circle class="sk" cx="60" cy="60" r="54" />
+      <g class="sk-eyes" transform="translate(60 50) rotate(15)">
+        <rect class="sk" x="-13.4" y="-11" width="8.2" height="22" rx="4.1" />
+        <rect class="sk" x="5.2" y="-11" width="8.2" height="22" rx="4.1" />
+      </g>
+    </svg>
     <div id="decor"></div>
     <div id="world" data-bots="0" data-landed="0" data-air="0"></div>
     <div id="confetti"></div>
@@ -39,7 +46,10 @@
             />
           </svg>
         </div>
-        <button type="button" class="pill" id="theme">Dark</button>
+        <div class="top-actions">
+          <button type="button" class="pill" id="sound" aria-pressed="false">Sound off</button>
+          <button type="button" class="pill" id="theme">Dark</button>
+        </div>
       </header>
 
       <section class="stage">
@@ -56,7 +66,7 @@
 
         <div class="clock-row" id="clock-row">
           <div class="clock-cluster" id="clock-cluster">
-            <p class="digits" id="clock" data-remaining="600">10:00</p>
+            <p class="digits" id="clock" data-remaining="600" data-face="10:00"><span class="slot">1</span><span class="slot">0</span><span class="colon">:</span><span class="slot">0</span><span class="slot">0</span></p>
             <div class="hero-wrap">
               <div class="bubble" id="bubble" hidden>on it.</div>
               <div class="hero" id="hero"></div>
@@ -68,7 +78,12 @@
         <p class="done-line" id="done-line" hidden>Build something that works.</p>
 
         <div class="controls">
-          <div class="presets" role="group" aria-label="Presets">
+          <div class="modes" role="tablist" aria-label="Mode">
+            <button type="button" id="mode-timer" data-mode="timer" role="tab" aria-selected="true">Timer</button>
+            <button type="button" id="mode-stopwatch" data-mode="stopwatch" role="tab" aria-selected="false">Stopwatch</button>
+            <button type="button" id="mode-alarm" data-mode="alarm" role="tab" aria-selected="false">Alarm</button>
+          </div>
+          <div class="presets timer-only" role="group" aria-label="Presets">
             <button type="button" class="pill" data-preset="60">1m</button>
             <button type="button" class="pill" data-preset="300">5m</button>
             <button type="button" class="pill" data-preset="600">10m</button>
@@ -79,7 +94,7 @@
 
           <hr class="rule" />
 
-          <form id="set-form" class="set">
+          <form id="set-form" class="set timer-only">
             <div class="set-label">Set time</div>
             <div class="set-row">
               <label class="step">
@@ -112,7 +127,17 @@
             <p class="hint" id="hint" hidden></p>
           </form>
 
-          <div class="adjust" role="group" aria-label="Adjust running time">
+          <form id="alarm-form" class="set alarm-only">
+            <div class="set-label">Alarm time</div>
+            <div class="set-row">
+              <input id="alarm-time" class="typed" type="time" value="16:30" aria-label="Alarm time" />
+            </div>
+          </form>
+          <div class="watch-only laps-wrap">
+            <button type="button" class="pill" id="lap">Lap</button>
+            <ol id="laps"></ol>
+          </div>
+          <div class="adjust timer-only" role="group" aria-label="Adjust running time">
             <button type="button" class="pill" id="minus1">−1 min</button>
             <button type="button" class="pill" id="plus1">+1 min</button>
             <button type="button" class="pill" id="plus5">+5 min</button>
@@ -130,6 +155,7 @@
       <h1 class="end-title" id="end-title">Time's Up</h1>
       <div class="end-actions">
         <button type="button" class="pill primary" id="restart">Restart</button>
+        <button type="button" class="pill" id="plus-five">+5 min</button>
         <button type="button" class="pill" id="new-timer">New timer</button>
       </div>
     </section>

@@ -102,8 +102,12 @@ function eyeMarkup(dash, eye) {
  * by updating the returned groups — the shape itself never changes.
  */
 export function createBotElement({ kind, fill, dash = false, eye = "#FFFFFF" }) {
+  const body = `<g class="body">${bodyMarkup(kind, fill)}</g>`;
+  const liquid = kind === "hero"
+    ? `<defs><clipPath id="heroFillClip"><circle cx="60" cy="60" r="58"/></clipPath></defs>${body}<g clip-path="url(#heroFillClip)"><rect class="liquid" x="1" y="120" width="118" height="120" fill="#9B6BFF"/></g>`
+    : body;
   const html = `<svg xmlns="${SVG_NS}" viewBox="0 0 120 120" aria-hidden="true">
-    <g class="body">${bodyMarkup(kind, fill)}</g>
+    ${liquid}
     <g class="eyes">
       <g class="spin">${eyeMarkup(dash, eye)}</g>
     </g>
@@ -116,7 +120,13 @@ export function createBotElement({ kind, fill, dash = false, eye = "#FFFFFF" }) 
   for (const el of svg.querySelectorAll(".e")) el.setAttribute("fill", eye);
   eyes.setAttribute("transform", "translate(60 50)");
   spin.setAttribute("transform", dash ? "rotate(0) scale(1 1)" : "rotate(15) scale(1 1)");
-  return { svg, eyes, spin, dash, body: svg.querySelector(".body") };
+  return { svg, eyes, spin, dash, body: svg.querySelector(".body"), liquid: svg.querySelector(".liquid") };
+}
+
+export function setHeroLevel(bot, progress) {
+  if (!bot?.liquid) return;
+  const p = Math.max(0, Math.min(1, progress));
+  bot.liquid.setAttribute("y", (120 - 118 * p).toFixed(2));
 }
 
 export function setEyes(bot, { gazeX = 0, gazeY = 0, blink = 1, eye, fill }) {
