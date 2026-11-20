@@ -1,0 +1,15 @@
+{
+  "name": "grok-bot-timer",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 43123",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0 --port 43123",
+    "test": "node --test tests/time.test.js"
+  },
+  "devDependencies": {
+    "puppeteer-core": "^24.15.0",
+    "vite": "^6.3.5"
+  }
+}

@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Grok Bot Timer</title>
+    <meta
+      name="description"
+      content="A full-screen Grok Bot countdown. Set any duration, share it with a link, and watch the bots land at zero."
+    />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <meta name="theme-color" content="#ffffff" />
+  </head>
+  <body>
+    <div id="decor"></div>
+    <div id="world" data-bots="0" data-landed="0" data-air="0"></div>
+    <div id="confetti"></div>
+    <main class="ui">
+      <header class="top">
+        <div class="mark" aria-label="SpaceX">
+          <svg viewBox="0 0 122 18" role="img" aria-label="SpaceX">
+            <text
+              x="0"
+              y="14"
+              fill="currentColor"
+              font-family="Inter, sans-serif"
+              font-size="15"
+              font-weight="700"
+              letter-spacing="1.7"
+            >
+              SPACEX
+            </text>
+            <path
+              d="M48 2.4c16 .1 32-.2 52 1.3"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.25"
+              stroke-linecap="round"
+            />
+          </svg>
+        </div>
+        <button type="button" class="pill" id="theme">Dark</button>
+      </header>
+
+      <section class="stage">
+        <p
+          class="eyebrow"
+          id="eyebrow"
+          contenteditable="true"
+          spellcheck="false"
+          role="textbox"
+          aria-label="Timer label"
+        >
+          BUILD TIME
+        </p>
+
+        <div class="clock-row">
+          <p class="digits" id="clock" data-remaining="600">10:00</p>
+          <div class="hero-wrap">
+            <div class="bubble" id="bubble" hidden>on it.</div>
+            <div class="hero" id="hero"></div>
+          </div>
+        </div>
+
+        <p class="sub" id="sub">Ends —</p>
+        <p class="done-line" id="done-line" hidden>Build something that works.</p>
+
+        <div class="controls">
+          <div class="presets" role="group" aria-label="Presets">
+            <button type="button" class="pill" data-preset="60">1m</button>
+            <button type="button" class="pill" data-preset="300">5m</button>
+            <button type="button" class="pill" data-preset="600">10m</button>
+            <button type="button" class="pill" data-preset="900">15m</button>
+            <button type="button" class="pill" data-preset="1500">25m</button>
+            <button type="button" class="pill" data-preset="7200">2h</button>
+          </div>
+
+          <hr class="rule" />
+
+          <form id="set-form" class="set">
+            <div class="set-label">Set time</div>
+            <div class="set-row">
+              <label class="step">
+                <span class="sr-only">Hours</span>
+                <input id="hh" type="number" min="0" max="12" inputmode="numeric" value="0" aria-label="Hours" />
+                <span>h</span>
+              </label>
+              <label class="step">
+                <span class="sr-only">Minutes</span>
+                <input id="mm" type="number" min="0" max="720" inputmode="numeric" value="10" aria-label="Minutes" />
+                <span>m</span>
+              </label>
+              <label class="step">
+                <span class="sr-only">Seconds</span>
+                <input id="ss" type="number" min="0" max="59" inputmode="numeric" value="0" aria-label="Seconds" />
+                <span>s</span>
+              </label>
+              <input
+                id="typed"
+                class="typed"
+                type="text"
+                inputmode="text"
+                autocomplete="off"
+                spellcheck="false"
+                placeholder="10, 10:00, or 1:30:00"
+                aria-label="Type a duration"
+              />
+              <button type="submit" class="pill" id="set-btn">Set</button>
+            </div>
+            <p class="hint" id="hint" hidden></p>
+          </form>
+
+          <div class="adjust" role="group" aria-label="Adjust running time">
+            <button type="button" class="pill" id="minus1">−1 min</button>
+            <button type="button" class="pill" id="plus1">+1 min</button>
+            <button type="button" class="pill" id="plus5">+5 min</button>
+          </div>
+
+          <div class="transport">
+            <button type="button" class="pill primary" id="start">Start</button>
+            <button type="button" class="pill" id="reset">Reset</button>
+          </div>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="/js/app.js"></script>
+  </body>
+</html>
