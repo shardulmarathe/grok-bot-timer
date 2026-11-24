@@ -10,28 +10,22 @@ import {
 import { createBotElement, setEyes, setHeroLevel, PALETTE } from "./shapes.js";
 
 const STORE_KEY = "grok-bot-timer";
+const ACCENT = "#9B6BFF";
 
 const $ = (id) => document.getElementById(id);
-const decorEl = $("decor");
 const worldEl = $("world");
 const confettiEl = $("confetti");
 const clockEl = $("clock");
-const clusterEl = $("clock-cluster");
+const typedEl = $("typed");
 const subEl = $("sub");
-const doneEl = $("done-line");
-const eyebrowEl = $("eyebrow");
-const bubbleEl = $("bubble");
 const heroEl = $("hero");
 const heroWrapEl = heroEl.parentElement;
-const playLayerEl = $("play-layer");
 const endScreenEl = $("end-screen");
 const themeBtn = $("theme");
 const startBtn = $("start");
 const hintEl = $("hint");
-const hhEl = $("hh");
-const mmEl = $("mm");
-const ssEl = $("ss");
-const typedEl = $("typed");
+const focusDock = $("focus-dock");
+const focusPauseBtn = $("focus-pause");
 
 let theme = "light";
 let mode = "timer";
@@ -39,53 +33,28 @@ let soundOn = false;
 let alarmHHMM = "16:30";
 let timerSeconds = 600;
 let laps = [];
-let nextCatch = 4000;
-let label = "BUILD TIME";
-let labelFrozen = false;
 let armed = 600;
 let state = "idle";
 let virtual = 0;
 let endVirtual = 0;
 let runSpan = 600;
 let lastTs = 0;
+let motionClock = 0;
 let bots = [];
-let decorBots = [];
+let bursts = [];
 let hero = null;
-let lastLanded = null;
-let line = null;
-let lineSince = 0;
-let confetti = [];
-let confettiAt = 0;
-let confettiSpawned = false;
 let audioCtx = null;
 let width = window.innerWidth;
 let height = window.innerHeight;
 let nextId = 1;
-let motionClock = 0;
-let wind = 36;
+let wind = 28;
 let nextSpawnAt = Infinity;
-let finalQueued = true;
-let flipToken = 0;
-let heroPlaying = false;
-let playClock = 0;
-const play = {
-  x: 0,
-  y: 0,
-  tx: 0,
-  ty: 0,
-  hopping: false,
-  hopT: 0,
-  nextHop: 0,
-};
+let nextCatch = 8000;
+let editing = false;
+let dockTimer = 0;
 
 function prefersReduced() {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-}
-
-function layoutMode(next = state) {
-  if (next === "running" || next === "paused") return "focus";
-  if (next === "done") return "end";
-  return "setup";
 }
 
 function readStore() {
@@ -100,7 +69,7 @@ function save() {
   try {
     localStorage.setItem(
       STORE_KEY,
-      JSON.stringify({ seconds: timerSeconds, label, theme, sound: soundOn, mode, alarm: alarmHHMM }),
+      JSON.stringify({ seconds: timerSeconds, theme, sound: soundOn, mode, alarm: alarmHHMM }),
     );
   } catch {
     /* private mode */
@@ -153,789 +122,25 @@ function displayValue() {
 }
 
 function timeProgress() {
-  if (mode === "stopwatch") return 0;
+  if (mode === "stopwatch" || state === "idle") return 0;
   if (state === "done") return 1;
-  if (state === "idle") return 0;
-  const total = Math.max(0.001, runSpan);
-  return Math.max(0, Math.min(1, elapsedSec() / total));
-}
-
-function elapsedSec() {
-  if (state === "idle") return 0;
-  return virtual / 1000;
+  return Math.max(0, Math.min(1, (virtual / 1000) / Math.max(0.001, runSpan)));
 }
 
 function phase() {
-  if (mode === "stopwatch") return "ok";
-  if (state === "done") return "done";
+  if (mode === "stopwatch" || state === "done" || state === "idle") return state === "done" ? "done" : "ok";
   const r = remainingSec();
-  if (state !== "idle" && r <= 60) return "final";
-  if (state !== "idle" && r <= 300) return "warn";
+  if (r <= 60) return "final";
   return "ok";
 }
 
 function heroFill() {
   return theme === "dark" ? "#2E2E33" : "#0A0A0A";
 }
-function heroEye() {
-  return "#FFFFFF";
-}
-
-function fieldFocused() {
-  const a = document.activeElement;
-  return a === hhEl || a === mmEl || a === ssEl || a === typedEl;
-}
-
-function fromSteppers() {
-  const h = Number(hhEl.value);
-  const m = Number(mmEl.value);
-  const s = Number(ssEl.value);
-  if (![h, m, s].every((n) => Number.isFinite(n) && n >= 0)) return null;
-  if (s > 59) return null;
-  return clampDuration(h * 3600 + m * 60 + s);
-}
-
-function fillSteppers(total) {
-  if (fieldFocused()) return;
-  const t = Math.max(0, Math.round(total));
-  hhEl.value = String(Math.floor(t / 3600));
-  mmEl.value = String(Math.floor((t % 3600) / 60));
-  ssEl.value = String(t % 60).padStart(2, "0");
-}
 
 function showHint(text) {
   hintEl.hidden = !text;
   hintEl.textContent = text || "";
-}
-
-const BOT_EYE = "#FFFFFF";
-
-function baseSize() {
-  const min = width < 720 ? 40 : 56;
-  const max = width < 720 ? 52 : 72;
-  const pct = width < 720 ? 0.12 : 0.06;
-  return Math.round(Math.max(min, Math.min(max, width * pct)));
-}
-
-function frameSize() {
-  const base = baseSize();
-  const min = width < 720 ? 40 : 56;
-  const max = width < 720 ? 52 : 72;
-  return Math.round(Math.max(min, Math.min(max, base * (0.94 + Math.random() * 0.1))));
-}
-
-function fallPhysics(depth) {
-  const drag = 6.4;
-  const vt = (500 + depth * 480) * Math.max(0.8, height / 880);
-  return { drag, vt, grav: vt * drag };
-}
-
-function mixHex(from, to, t) {
-  const parse = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
-  const a = parse(from);
-  const b = parse(to);
-  return `#${a
-    .map((v, i) => Math.round(v + (b[i] - v) * t).toString(16).padStart(2, "0"))
-    .join("")}`;
-}
-
-function mount(parent, spec, extra = {}) {
-  const parts = createBotElement(spec);
-  parts.svg.classList.add("bot");
-  parts.svg.style.position = "absolute";
-  parent.appendChild(parts.svg);
-  return {
-    ...parts,
-    ...extra,
-    kind: spec.kind,
-    fill: spec.fill,
-    x: 0,
-    y: 0,
-    hx: 0,
-    hy: 0,
-    rot: extra.rot ?? 0,
-    size: extra.size ?? 64,
-    state: extra.state ?? "air",
-  };
-}
-
-function splashScale(bot) {
-  const t = bot.splashT || 0;
-  if (t < 90) return { sx: 1.26, sy: 0.72 };
-  if (t < 200) return { sx: 0.9, sy: 1.16 };
-  if (t < 310) return { sx: 1.08, sy: 0.9 };
-  return { sx: 1, sy: 1 };
-}
-
-function place(bot) {
-  if (bot.state === "caught") {
-    const wrap = heroWrapEl.getBoundingClientRect();
-    const bounce = Math.sin(Math.min(1, (bot.caughtT || 0) / 420) * Math.PI) * 16;
-    const lx = bot.handX - wrap.left;
-    const ly = bot.handY - wrap.top - bounce;
-    bot.svg.style.width = `${bot.size}px`;
-    bot.svg.style.height = `${bot.size}px`;
-    bot.svg.style.transform = `translate(${lx - bot.size / 2}px, ${ly - bot.size / 2}px) rotate(${bot.rot || 0}deg)`;
-    return;
-  }
-  const bob = bot.state === "frame" ? Math.sin(motionClock / 620 + bot.id) * 3.4 : 0;
-  const party = state === "done" && (bot.state === "frame" || bot.state === "landed");
-  const wave = party ? Math.sin(motionClock / (prefersReduced() ? 520 : 170) + bot.id * 0.65) * (prefersReduced() ? 3 : 14) : 0;
-  const spin = party && !prefersReduced() ? Math.sin(motionClock / 260 + bot.id) * 20 : 0;
-  const sc = bot.state === "splash" ? splashScale(bot) : bot.state === "pop"
-    ? { sx: Math.max(0.05, 1 - (bot.popT || 0) / 220), sy: Math.max(0.05, 1 - (bot.popT || 0) / 220) }
-    : { sx: 1, sy: 1 };
-  bot.svg.style.width = `${bot.size}px`;
-  bot.svg.style.height = `${bot.size}px`;
-  bot.svg.style.transform = `translate(${bot.x - bot.size / 2}px, ${bot.y + bob + wave - bot.size / 2}px) rotate(${(bot.rot || 0) + spin}deg) scale(${sc.sx}, ${sc.sy})`;
-}
-
-function gazeVector(fromX, fromY, toX, toY) {
-  const dx = toX - fromX;
-  const dy = toY - fromY;
-  const m = Math.hypot(dx, dy) || 1;
-  return { x: Math.max(-1, Math.min(1, dx / m)), y: Math.max(-1, Math.min(1, dy / m)) };
-}
-
-function blinkScale(bot, clock = virtual) {
-  if (!bot.blinkStart) return 1;
-  const t = (clock - bot.blinkStart) / 150;
-  if (t < 0 || t > 1) return 1;
-  return t < 0.45 ? 1 - (t / 0.45) * 0.9 : 0.1 + ((t - 0.45) / 0.55) * 0.9;
-}
-
-function clockCenter() {
-  const r = clockEl.getBoundingClientRect();
-  return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-}
-
-function arrivalPoint() {
-  const falling = bots.filter((b) => b.state === "falling" || b.state === "splash");
-  if (falling.length) {
-    const b = falling[falling.length - 1];
-    return { x: b.x, y: b.y };
-  }
-  return clockCenter();
-}
-
-function layoutMound(list) {
-  if (!list.length) return;
-  const sorted = [...list].sort((a, b) => b.size - a.size || a.id - b.id);
-  const maxW = Math.max(160, width - 16);
-  const rows = [];
-  let i = 0;
-  let row = 0;
-  while (i < sorted.length) {
-    const budget = maxW * Math.max(0.58, 1 - row * 0.05);
-    const rowBots = [];
-    let used = 0;
-    while (i < sorted.length) {
-      const b = sorted[i];
-      const need = b.size * 0.74;
-      if (rowBots.length && used + need > budget) break;
-      rowBots.push(b);
-      used += need;
-      i++;
-    }
-    rows.push({ bots: rowBots, used, h: Math.max(...rowBots.map((b) => b.size)) });
-    row++;
-  }
-  let floor = height - 8;
-  for (const r of rows) {
-    let x = width / 2 - r.used / 2;
-    for (const b of r.bots) {
-      const inset = b.size * 0.55;
-      let hx = x + b.size * 0.37;
-      hx = Math.max(inset, Math.min(width - inset, hx));
-      b.hx = hx;
-      b.hy = floor - b.size / 2;
-      x += b.size * 0.74;
-    }
-    floor -= r.h * 0.5;
-  }
-}
-
-function pileCap() {
-  const s = baseSize();
-  const per = Math.max(4, Math.floor((width - 16) / (s * 0.74)));
-  const rows = Math.max(1, Math.floor((height * 0.36) / (s * 0.5)));
-  return per * rows;
-}
-
-function layoutLanded() {
-  const landed = bots.filter((b) => b.state === "landed" && !b.retiring);
-  const cap = pileCap();
-  if (landed.length > cap) {
-    const ranked = [...landed].sort((a, b) => {
-      const edgeA = Math.abs(a.x - width / 2) / width;
-      const edgeB = Math.abs(b.x - width / 2) / width;
-      return a.id - edgeA * 1e6 - (b.id - edgeB * 1e6);
-    });
-    for (let i = 0; i < landed.length - cap; i++) {
-      ranked[i].retiring = true;
-      ranked[i].retireT = ranked[i].retireT || 0;
-    }
-  }
-  layoutMound(bots.filter((b) => b.state === "landed" && !b.retiring));
-}
-
-function frameSlots() {
-  const s = baseSize();
-  const slots = [];
-  const step = s * 0.82;
-  const across = Math.max(8, Math.min(18, Math.round((width + s * 0.35) / step)));
-  const rows = height >= 500 ? 2 : 1;
-  for (let row = 0; row < rows; row++) {
-    const n = row === 0 ? across : Math.max(6, across - 2);
-    const span = width + s * 0.45;
-    const dx = span / n;
-    for (let i = 0; i < n; i++) {
-      slots.push({
-        edge: "top",
-        x: -s * 0.22 + i * dx + (row ? dx * 0.48 : 0),
-        y: s * (0.28 + row * 0.52),
-      });
-    }
-  }
-  const bStep = (width + s * 0.35) / across;
-  for (let i = 0; i < across; i++) {
-    slots.push({
-      edge: "bottom",
-      x: -s * 0.18 + i * bStep,
-      y: height - s * 0.2,
-    });
-  }
-  const vStep = s * 0.8;
-  const sideN = Math.max(2, Math.floor((height - s * 2.2) / vStep));
-  for (let i = 0; i < sideN; i++) {
-    const y = s * 1.25 + i * vStep;
-    if (y > height - s * 1.2) break;
-    slots.push({ edge: "left", x: s * 0.16, y });
-    slots.push({ edge: "right", x: width - s * 0.16, y });
-  }
-  return slots;
-}
-
-function orderWorld() {
-  const rank = (b) => (b.state === "frame" ? 0 : b.state === "falling" ? 1 + (b.depth || 0) : 4);
-  const ordered = [...bots].sort((a, b) => rank(a) - rank(b) || a.id - b.id);
-  for (const b of ordered) worldEl.appendChild(b.svg);
-}
-
-function rebuildFrame() {
-  for (const b of bots) {
-    if (b.state === "frame") b.svg.remove();
-  }
-  bots = bots.filter((b) => b.state !== "frame");
-  frameSlots().forEach((slot, i) => {
-    const spec = PALETTE[i % PALETTE.length];
-    const bot = mount(worldEl, { kind: spec.kind, fill: spec.fill, dash: !!spec.dash, eye: BOT_EYE }, {
-      id: nextId++,
-      size: frameSize(),
-      rot: (Math.random() < 0.5 ? -1 : 1) * (3 + Math.random() * 8),
-      state: "frame",
-      nextBlink: motionClock + 400 + Math.random() * 2400,
-      blinkStart: 0,
-    });
-    bot.edge = slot.edge;
-    bot.fill = spec.fill;
-    bot.dash = !!spec.dash;
-    bot.hx = slot.x;
-    bot.hy = slot.y;
-    bot.x = slot.x;
-    bot.y = slot.y;
-    bot.svg.dataset.edge = slot.edge;
-    bot.svg.dataset.role = "frame";
-    bots.push(bot);
-  });
-  orderWorld();
-}
-
-function surfaceY(x, size) {
-  let y = height - size * 0.18;
-  for (const b of bots) {
-    if ((b.state !== "landed" && b.state !== "splash") || b.retiring) continue;
-    if (Math.abs(b.x - x) < (b.size + size) * 0.45) y = Math.min(y, b.y - b.size * 0.46);
-  }
-  return y;
-}
-
-function predictFallMs(depth, size) {
-  const { drag, grav } = fallPhysics(depth);
-  let y = -size * 0.2;
-  let vy = 30 + depth * 30;
-  const floor = height - size * 0.18;
-  let t = 0;
-  const step = 16;
-  while (y < floor && t < 5000) {
-    const sec = step / 1000;
-    vy += (grav - drag * vy) * sec;
-    y += vy * sec;
-    t += step;
-  }
-  return t;
-}
-
-function pulseTop(x) {
-  let best = null;
-  let dist = Infinity;
-  for (const b of bots) {
-    if (b.state !== "frame" || b.edge !== "top" || b.refillStart != null) continue;
-    const d = Math.abs(b.hx - x);
-    if (d < dist) {
-      dist = d;
-      best = b;
-    }
-  }
-  if (best && dist < best.size * 1.6) best.refillStart = motionClock;
-}
-
-function spawnDrop(opts = {}) {
-  const spec = PALETTE[Math.floor(Math.random() * PALETTE.length)];
-  const depth = opts.depth ?? Math.random();
-  const base = baseSize();
-  const min = width < 720 ? 40 : 56;
-  const max = width < 720 ? 52 : 72;
-  const size = Math.round(Math.max(min, Math.min(max, base * (0.86 + depth * 0.16))));
-  const phys = fallPhysics(depth);
-  const bot = mount(worldEl, { kind: spec.kind, fill: spec.fill, dash: !!spec.dash, eye: BOT_EYE }, {
-    id: nextId++,
-    size,
-    rot: Math.max(-6, Math.min(6, wind * 0.055 + (Math.random() - 0.5) * 2.2)),
-    state: "falling",
-    nextBlink: motionClock + 600,
-    blinkStart: 0,
-  });
-  bot.depth = depth;
-  bot.fill = spec.fill;
-  bot.dash = !!spec.dash;
-  bot.x = opts.x ?? size * 0.15 + Math.random() * Math.max(20, width - size * 0.3);
-  bot.y = -size * (0.08 + Math.random() * 0.28);
-  bot.vx = wind * (0.72 + Math.random() * 0.5) * (0.62 + depth * 0.5);
-  bot.vy = 16 + depth * 36;
-  bot.drag = phys.drag;
-  bot.grav = phys.grav;
-  bot.opacity = 0.5 + depth * 0.5;
-  bot.final = !!opts.final;
-  bot.svg.classList.add("falling");
-  bot.svg.dataset.role = "rain";
-  bot.svg.style.opacity = String(bot.opacity);
-  bot.svg.style.zIndex = String(2 + Math.round(depth * 6));
-  bots.push(bot);
-  pulseTop(bot.x);
-  orderWorld();
-}
-
-function armRain() {
-  wind = (Math.random() < 0.5 ? -1 : 1) * (24 + Math.random() * 42);
-  nextSpawnAt = virtual + 140 + Math.random() * 360;
-  finalQueued = false;
-}
-
-function tickSpawn() {
-  if (state !== "running" || finalQueued) return;
-  if (mode === "stopwatch") {
-    if (virtual < nextSpawnAt) return;
-    spawnDrop();
-    nextSpawnAt = virtual + 820 * (0.65 + Math.random() * 0.7);
-    return;
-  }
-  const size = baseSize();
-  const travel = predictFallMs(0.84, size);
-  const finalAt = endVirtual - travel;
-  const span = Math.max(1, runSpan * 1000);
-  const prog = Math.max(0, Math.min(1, 1 - (endVirtual - virtual) / span));
-  if (virtual >= finalAt) {
-    spawnDrop({ depth: 0.84, final: true });
-    finalQueued = true;
-    return;
-  }
-  if (virtual < nextSpawnAt) return;
-  spawnDrop();
-  const interval = (720 - prog * 260) * (0.58 + Math.random() * 0.85);
-  nextSpawnAt = virtual + interval;
-  if (nextSpawnAt > finalAt) nextSpawnAt = finalAt;
-}
-
-function startSplash(bot) {
-  bot.state = "splash";
-  bot.splashT = 0;
-  bot.bounces = 1;
-  bot.splashFloor = bot.y;
-  bot.vy = -Math.min(210, Math.abs(bot.vy) * 0.25);
-  bot.svg.classList.remove("falling");
-  lastLanded = bot;
-  boop();
-}
-
-function heroBox() {
-  const r = heroEl.getBoundingClientRect();
-  return { x: r.left + r.width / 2, y: r.top + r.height * 0.62, w: r.width, h: r.height, top: r.top, bottom: r.bottom };
-}
-
-function tryCatch(bot) {
-  if (state !== "running" || !catchReady()) return false;
-  const box = heroBox();
-  if (box.w < 8) return false;
-  if (Math.abs(bot.x - box.x) > box.w * 0.95) return false;
-  if (bot.y < box.top - 10 || bot.y > box.bottom + 24) return false;
-  bot.state = "caught";
-  bot.caughtT = 0;
-  bot.handX = box.x;
-  bot.handY = box.y + box.h * 0.08;
-  bot.svg.dataset.caught = "1";
-  bot.svg.classList.remove("falling");
-  heroWrapEl.appendChild(bot.svg);
-  nextCatch = motionClock + 6500 + Math.random() * 4500;
-  boop();
-  return true;
-}
-
-function catchReady() {
-  return motionClock > nextCatch;
-}
-
-function tickMotion(dt) {
-  const sec = Math.max(0, dt / 1000);
-  for (const bot of bots) {
-    if (bot.state === "frame") {
-      bot.x = bot.hx;
-      bot.y = bot.hy;
-    } else if (bot.state === "falling" && sec > 0) {
-      bot.vy += (bot.grav - bot.drag * bot.vy) * sec;
-      bot.x += bot.vx * sec;
-      bot.y += bot.vy * sec;
-      if (tryCatch(bot)) continue;
-      if (bot.final && mode !== "stopwatch" && virtual < endVirtual - 40 && bot.y > surfaceY(bot.x, bot.size) - 10) {
-        bot.y = Math.min(bot.y, surfaceY(bot.x, bot.size) - 8);
-        bot.vy = Math.min(bot.vy, 80);
-      }
-      if (bot.y >= surfaceY(bot.x, bot.size)) {
-        bot.y = surfaceY(bot.x, bot.size);
-        startSplash(bot);
-      }
-    } else if (bot.state === "splash" && sec > 0) {
-      bot.splashT += dt;
-      bot.vy += bot.grav * sec;
-      bot.y += bot.vy * sec;
-      bot.x += bot.vx * sec * 0.2;
-      if (bot.y >= bot.splashFloor) {
-        bot.y = bot.splashFloor;
-        bot.vy = -bot.vy * 0.28;
-        bot.bounces = (bot.bounces || 0) + 1;
-        if (bot.bounces >= 2 || Math.abs(bot.vy) < 55 || bot.splashT > 460) {
-          bot.state = "landed";
-          bot.vy = 0;
-          bot.vx = 0;
-          layoutLanded();
-        }
-      }
-    } else if (bot.state === "caught" && sec > 0) {
-      bot.caughtT += dt;
-      const bounce = Math.sin(Math.min(1, bot.caughtT / 420) * Math.PI) * 22;
-      bot.x += (bot.handX - bot.x) * 0.34;
-      bot.y += (bot.handY - bounce - bot.y) * 0.34;
-      if (bot.caughtT > 900) {
-        worldEl.appendChild(bot.svg);
-        bot.x = bot.handX;
-        bot.y = bot.handY;
-        if (Math.random() < 0.35) {
-          bot.state = "pop";
-          bot.popT = 0;
-        } else {
-          bot.state = "landed";
-          bot.vy = 0;
-          bot.vx = 0;
-          layoutLanded();
-        }
-      }
-    } else if (bot.state === "pop") {
-      bot.popT = (bot.popT || 0) + dt;
-      bot.svg.style.opacity = String(Math.max(0, 1 - bot.popT / 220));
-      if (bot.popT > 220) bot.dead = true;
-    } else if (bot.state === "landed" && sec > 0 && bot.hx != null) {
-      const k = Math.min(1, dt / 170);
-      bot.x += (bot.hx - bot.x) * k;
-      bot.y += (bot.hy - bot.y) * k;
-    }
-    if (motionClock > (bot.nextBlink || 0)) {
-      bot.blinkStart = motionClock;
-      bot.nextBlink = motionClock + 1800 + Math.random() * 3200;
-    }
-  }
-}
-
-function tickRetire(dt) {
-  for (const bot of bots) {
-    if (!bot.retiring) continue;
-    bot.retireT = (bot.retireT || 0) + dt;
-    bot.svg.style.opacity = String(Math.max(0, 1 - bot.retireT / 380));
-    if (bot.retireT > 380) bot.dead = true;
-  }
-  if (!bots.some((b) => b.dead)) return;
-  bots = bots.filter((b) => {
-    if (!b.dead) return true;
-    b.svg.remove();
-    return false;
-  });
-}
-
-function rebuild() {
-  for (const b of bots) b.svg.remove();
-  bots = [];
-  confetti = [];
-  confettiEl.replaceChildren();
-  confettiSpawned = false;
-  confettiAt = 0;
-  worldEl.classList.remove("hop");
-  heroEl.classList.remove("cheer");
-  finalQueued = true;
-  nextSpawnAt = Infinity;
-  lastLanded = null;
-  line = null;
-  bubbleEl.hidden = true;
-  rebuildFrame();
-}
-
-function paintGaze() {
-  const center = clockCenter();
-  const arrive = arrivalPoint();
-  let topCut = Infinity;
-  const landed = bots.filter((b) => b.state === "landed");
-  if (landed.length) {
-    const ys = landed.map((b) => b.y).sort((a, b) => a - b);
-    topCut = ys[Math.min(ys.length - 1, Math.max(0, Math.floor(ys.length * 0.28)))];
-  }
-  for (const bot of bots) {
-    let target = center;
-    if (bot.state === "landed" && bot.y <= topCut + 8) target = arrive;
-    else if (bot.state === "falling" || bot.state === "splash") target = { x: bot.x + (bot.vx || 0) * 0.15, y: bot.y + bot.size };
-    const g = gazeVector(bot.x, bot.y, target.x, target.y);
-    setEyes(bot, { gazeX: g.x, gazeY: g.y, blink: blinkScale(bot, motionClock), eye: BOT_EYE });
-    if (bot.state === "frame" && bot.refillStart != null) {
-      const p = Math.min(1, (motionClock - bot.refillStart) / 1000);
-      const ease = 1 - Math.pow(1 - p, 2);
-      bot.svg.style.opacity = String(0.22 + 0.78 * ease);
-      setEyes(bot, {
-        gazeX: g.x,
-        gazeY: g.y,
-        blink: blinkScale(bot, motionClock),
-        eye: BOT_EYE,
-        fill: mixHex("#141414", bot.fill, ease),
-      });
-      if (p >= 1) {
-        bot.refillStart = null;
-        bot.svg.style.opacity = "1";
-      }
-    } else if (bot.state === "falling") {
-      bot.svg.style.opacity = String(bot.opacity ?? 1);
-    }
-    place(bot);
-  }
-  for (const bot of decorBots) {
-    const g = gazeVector(bot.cx, bot.cy, center.x, center.y);
-    setEyes(bot, { gazeX: g.x, gazeY: g.y, blink: blinkScale(bot), eye: BOT_EYE });
-  }
-  if (hero) {
-    const clock = state === "done" ? playClock : motionClock;
-    const hr = heroEl.getBoundingClientRect();
-    const hx = hr.left + hr.width / 2;
-    const hy = hr.top + hr.height / 2;
-    let nearest = null;
-    let nearD = 520;
-    if (!heroPlaying) {
-      for (const b of bots) {
-        if (b.state !== "falling" && b.state !== "caught") continue;
-        const d = Math.hypot(b.x - hx, b.y - hy);
-        if (d < nearD) {
-          nearD = d;
-          nearest = b;
-        }
-      }
-    }
-    const target = heroPlaying
-      ? { x: play.tx, y: play.ty }
-      : nearest
-        ? { x: nearest.x, y: nearest.y }
-        : lastLanded
-          ? { x: lastLanded.x, y: lastLanded.y }
-          : arrive;
-    const g = gazeVector(hx, hy, target.x, target.y);
-    if (clock > hero.nextBlink) {
-      hero.blinkStart = clock;
-      hero.nextBlink = clock + (state === "running" ? 1400 : 2200) + Math.random() * 1600;
-    }
-    setEyes(hero, {
-      gazeX: g.x,
-      gazeY: g.y,
-      blink: blinkScale(hero, clock),
-      eye: heroEye(),
-      fill: heroFill(),
-    });
-    setHeroLevel(hero, timeProgress());
-  }
-}
-
-function counts() {
-  const landed = bots.filter((b) => b.state === "landed").length;
-  const air = bots.filter((b) => b.state === "falling" || b.state === "splash").length;
-  worldEl.dataset.bots = String(bots.length);
-  worldEl.dataset.landed = String(landed);
-  worldEl.dataset.air = String(air);
-}
-
-function runFlip(first, last) {
-  const token = ++flipToken;
-  const fw = first.width || 1;
-  const lw = last.width || 1;
-  const dx = first.left + fw / 2 - (last.left + lw / 2);
-  const dy = first.top + first.height / 2 - (last.top + last.height / 2);
-  const s = Math.max(0.2, Math.min(4, fw / lw));
-  const ms = prefersReduced() ? 280 : 720;
-  clusterEl.style.transition = "none";
-  clusterEl.style.transformOrigin = "center center";
-  clusterEl.style.transform = `translate(${dx}px, ${dy}px) scale(${s})`;
-  void clusterEl.offsetWidth;
-  requestAnimationFrame(() => {
-    if (token !== flipToken) return;
-    clusterEl.style.transition = `transform ${ms}ms cubic-bezier(.2,.8,.2,1)`;
-    clusterEl.style.transform = "translate(0px, 0px) scale(1)";
-  });
-  const clear = () => {
-    if (token !== flipToken) return;
-    flipToken += 1;
-    clusterEl.style.transition = "";
-    clusterEl.style.transform = "";
-    clusterEl.removeEventListener("transitionend", onEnd);
-  };
-  const onEnd = (event) => {
-    if (event.target !== clusterEl || event.propertyName !== "transform") return;
-    clear();
-  };
-  clusterEl.addEventListener("transitionend", onEnd);
-  setTimeout(clear, ms + 90);
-}
-
-function endOccupied() {
-  const title = $("end-title")?.getBoundingClientRect();
-  const actions = document.querySelector(".end-actions")?.getBoundingClientRect();
-  if (!title || !actions || title.width < 8) return null;
-  const padX = 96;
-  const padY = 72;
-  return {
-    left: Math.min(title.left, actions.left) - padX,
-    right: Math.max(title.right, actions.right) + padX,
-    top: title.top - padY,
-    bottom: actions.bottom + padY,
-  };
-}
-
-function playBlocked(x, y) {
-  const box = endOccupied();
-  if (!box) return false;
-  return x > box.left && x < box.right && y > box.top && y < box.bottom;
-}
-
-function pickPlayTarget() {
-  const spots = [
-    { x: width * (0.1 + Math.random() * 0.8), y: height * (0.76 + Math.random() * 0.14) },
-    { x: width * (0.08 + Math.random() * 0.18), y: height * (0.74 + Math.random() * 0.16) },
-    { x: width * (0.74 + Math.random() * 0.18), y: height * (0.74 + Math.random() * 0.16) },
-    { x: width * (0.12 + Math.random() * 0.76), y: height * (0.06 + Math.random() * 0.1) },
-  ];
-  for (const spot of spots) {
-    if (!playBlocked(spot.x, spot.y)) {
-      play.tx = Math.max(70, Math.min(width - 70, spot.x));
-      play.ty = Math.max(70, Math.min(height - 70, spot.y));
-      return;
-    }
-  }
-  play.tx = width * 0.5;
-  play.ty = height * 0.86;
-}
-
-function startHeroPlay() {
-  if (heroPlaying) return;
-  const box = heroEl.getBoundingClientRect();
-  play.x = box.left + box.width / 2;
-  play.y = box.top + box.height / 2;
-  play.tx = play.x;
-  play.ty = play.y;
-  play.hopping = false;
-  play.hopT = 0;
-  play.nextHop = playClock + 280;
-  hero.blinkStart = 0;
-  hero.nextBlink = playClock + 360;
-  heroPlaying = true;
-  playLayerEl.hidden = false;
-  playLayerEl.setAttribute("aria-hidden", "false");
-  playLayerEl.appendChild(heroEl);
-  play.ty = height * 0.72;
-  play.tx = width * (Math.random() < 0.5 ? 0.22 : 0.78);
-  const playSize = Math.max(112, Math.min(156, box.width));
-  heroEl.style.width = `${playSize}px`;
-  heroEl.style.height = `${playSize}px`;
-  heroEl.style.transform = `translate(${play.x}px, ${play.y}px) translate(-50%, -50%)`;
-  pickPlayTarget();
-}
-
-function stopHeroPlay() {
-  if (!heroPlaying && heroEl.parentElement === heroWrapEl) return;
-  heroPlaying = false;
-  heroWrapEl.appendChild(heroEl);
-  heroEl.style.transform = "";
-  heroEl.style.width = "";
-  heroEl.style.height = "";
-  playLayerEl.hidden = true;
-  playLayerEl.setAttribute("aria-hidden", "true");
-}
-
-function tickPlay(dt) {
-  if (!heroPlaying) return;
-  playClock += dt;
-  const reduce = prefersReduced();
-  const rate = 1 - Math.pow(1 - (reduce ? 0.018 : 0.04), dt / 16.67);
-  if (playBlocked(play.x, play.y) || playBlocked(play.tx, play.ty)) {
-    play.tx = play.x < width / 2 ? width * 0.12 : width * 0.88;
-    play.ty = height * 0.84;
-    if (playBlocked(play.tx, play.ty)) {
-      play.tx = width * 0.5;
-      play.ty = height * 0.88;
-    }
-  }
-  play.x += (play.tx - play.x) * rate;
-  play.y += (play.ty - play.y) * rate;
-  if (Math.hypot(play.tx - play.x, play.ty - play.y) < 28) pickPlayTarget();
-
-  let hop = reduce ? Math.sin(playClock / 900) * 5 : 0;
-  let sx = 1;
-  let sy = 1;
-  if (!reduce && playClock > play.nextHop && !play.hopping) {
-    play.hopping = true;
-    play.hopT = 0;
-    play.nextHop = playClock + 1100 + Math.random() * 1600;
-  }
-  if (play.hopping) {
-    play.hopT += dt;
-    const t = play.hopT / 560;
-    if (t >= 1) {
-      play.hopping = false;
-    } else {
-      hop = Math.sin(Math.min(1, t) * Math.PI) * 42;
-      if (t < 0.16) {
-        sx = 1.18;
-        sy = 0.82;
-      } else if (t < 0.55) {
-        sx = 0.88;
-        sy = 1.16;
-      } else {
-        sx = 1.12;
-        sy = 0.86;
-      }
-    }
-  }
-  const tilt = reduce ? 0 : Math.max(-14, Math.min(14, (play.tx - play.x) * 0.05));
-  heroEl.style.transform = `translate(${play.x}px, ${play.y - hop}px) translate(-50%, -50%) scale(${sx}, ${sy}) rotate(${tilt}deg)`;
 }
 
 function renderDigits(text) {
@@ -951,26 +156,16 @@ function renderDigits(text) {
   );
 }
 
-function applySketch(progress) {
-  const sketch = $("sketch");
-  if (!sketch) return;
-  const p = prefersReduced() ? (progress > 0.5 ? 1 : 0) : progress;
-  for (const el of sketch.querySelectorAll(".sk")) {
-    const len = Number(el.dataset.len || el.getTotalLength());
-    el.dataset.len = String(len);
-    el.style.strokeDasharray = String(len);
-    el.style.strokeDashoffset = String(len * (1 - p));
-  }
-  sketch.style.opacity = String(0.12 + 0.5 * p);
-}
-
 function renderLaps() {
   const list = $("laps");
-  if (!list) return;
   list.replaceChildren(
     ...laps.map((sec, i) => {
       const li = document.createElement("li");
-      li.textContent = `Lap ${laps.length - i}  ${formatClock(Math.floor(sec))}`;
+      const name = document.createElement("span");
+      const time = document.createElement("span");
+      name.textContent = `Lap ${laps.length - i}`;
+      time.textContent = formatClock(Math.floor(sec));
+      li.append(name, time);
       return li;
     }),
   );
@@ -979,100 +174,130 @@ function renderLaps() {
 function renderChrome() {
   if (mode === "alarm" && state === "idle") armed = secondsUntilAlarm();
   const shown = displaySeconds(displayValue());
-  renderDigits(formatClock(shown));
-  const rem = mode === "stopwatch" ? 0 : remainingSec();
-  clockEl.dataset.remaining = String(Math.round((mode === "stopwatch" ? displayValue() : rem) * 1000) / 1000);
-  applySketch(timeProgress());
-  document.body.dataset.mode = mode;
-  const prevLayout = document.body.dataset.layout || "setup";
-  const nextLayout = layoutMode();
-  const shouldFlip =
-    (prevLayout === "setup" && nextLayout === "focus") ||
-    (prevLayout === "focus" && nextLayout === "setup");
-  const first = shouldFlip ? clusterEl.getBoundingClientRect() : null;
+  if (!editing) renderDigits(formatClock(shown));
+  const rem = mode === "stopwatch" ? displayValue() : remainingSec();
+  clockEl.dataset.remaining = String(Math.round(rem * 1000) / 1000);
   document.body.dataset.state = state;
-  document.body.dataset.layout = nextLayout;
+  document.body.dataset.mode = mode;
   document.body.dataset.phase = phase();
-  if (first) {
-    const last = clusterEl.getBoundingClientRect();
-    if (last.width > 0 && first.width > 0) runFlip(first, last);
-  }
-  if (nextLayout === "end" && prevLayout !== "end") startHeroPlay();
-  if (nextLayout !== "end" && prevLayout === "end") stopHeroPlay();
-  endScreenEl.setAttribute("aria-hidden", nextLayout === "end" ? "false" : "true");
+  endScreenEl.hidden = state !== "done";
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.content = theme === "dark" ? "#000000" : "#ffffff";
 
-  if (state === "done") {
-    subEl.hidden = true;
-    doneEl.hidden = true;
-  } else {
-    subEl.hidden = false;
-    doneEl.hidden = true;
+  if (state !== "done") {
     if (mode === "alarm") subEl.textContent = `until ${formatEndTime(alarmDate())}`;
     else if (mode === "stopwatch") subEl.textContent = laps.length ? `${laps.length} lap${laps.length === 1 ? "" : "s"}` : "Counting up";
     else subEl.textContent = `Ends ${formatEndTime(new Date(Date.now() + remainingSec() * 1000))}`;
   }
+
   for (const btn of document.querySelectorAll(".modes button")) {
     btn.setAttribute("aria-selected", btn.dataset.mode === mode ? "true" : "false");
   }
-  const soundBtn = $("sound");
-  if (soundBtn) {
-    soundBtn.textContent = soundOn ? "Sound on" : "Sound off";
-    soundBtn.setAttribute("aria-pressed", soundOn ? "true" : "false");
-  }
-
-  const preset = String(state === "idle" ? armed : Math.round(rem));
   for (const btn of document.querySelectorAll("[data-preset]")) {
-    btn.setAttribute("aria-pressed", btn.dataset.preset === String(armed) && state !== "running" ? "true" : "false");
+    btn.setAttribute("aria-pressed", btn.dataset.preset === String(timerSeconds) && state === "idle" ? "true" : "false");
   }
-  const focusLabel = state === "paused" ? "Resume" : "Pause";
-  startBtn.textContent = state === "running" ? "Pause" : state === "paused" ? "Resume" : "Start";
-  if (focusPauseBtn) focusPauseBtn.textContent = focusLabel;
-  if (mode === "timer") fillSteppers(state === "idle" ? armed : rem);
-  counts();
-  void preset;
+  const label = state === "running" ? "Pause" : state === "paused" ? "Resume" : "Start";
+  startBtn.textContent = label;
+  focusPauseBtn.textContent = state === "paused" ? "Resume" : "Pause";
+  const soundBtn = $("sound");
+  soundBtn.setAttribute("aria-pressed", soundOn ? "true" : "false");
+  soundBtn.setAttribute("aria-label", soundOn ? "Sound on" : "Sound off");
+  themeBtn.setAttribute("aria-pressed", theme === "dark" ? "true" : "false");
+  themeBtn.setAttribute("aria-label", theme === "dark" ? "Light theme" : "Dark theme");
+  const air = bots.filter((b) => b.state === "drift" || b.state === "caught").length;
+  worldEl.dataset.bots = String(bots.length);
+  worldEl.dataset.landed = "0";
+  worldEl.dataset.air = String(air);
 }
 
-function say(text, hold = 3400) {
-  line = text;
-  lineSince = virtual;
-  bubbleEl.textContent = text;
-  bubbleEl.hidden = false;
-  bubbleEl.dataset.hold = String(hold);
-}
-
-function updateBubble() {
-  if (state !== "running") {
-    if (state !== "paused") bubbleEl.hidden = true;
+function nudge(seconds) {
+  if (mode === "stopwatch" || state === "done") return;
+  if (mode === "alarm" && state === "idle") {
+    const [h, m] = alarmHHMM.split(":").map(Number);
+    const total = (h * 60 + m + Math.round(seconds / 60) + 24 * 60) % (24 * 60);
+    alarmHHMM = `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+    $("alarm-time").value = alarmHHMM;
+    save();
+    updateUrl();
+    renderChrome();
     return;
   }
-  const rem = remainingSec();
-  const total = Math.max(rem, runSpan);
-  let next = null;
-  let hold = 3400;
-  if (rem <= 12 && total > 15) {
-    next = "almost…";
-    hold = 20000;
-  } else if (rem <= 60 && total >= 70) {
-    next = "one minute left";
-    hold = 20000;
-  } else {
-    const p = 1 - rem / total;
-    if (p >= 0.72 && p < 0.86 && total >= 90) next = "still here with you";
-    else if (p >= 0.48 && p < 0.6 && total >= 30) next = "halfway there";
-    else if (p < 0.06) next = "on it.";
+  if (state === "idle") {
+    const next = clampDuration(armed + seconds);
+    if (!next) return;
+    armed = next;
+    timerSeconds = next;
+    save();
+    updateUrl();
+    renderChrome();
+    return;
   }
-  if (next && next !== line) say(next, hold);
-  const allowed = Number(bubbleEl.dataset.hold || 3400);
-  if (line && virtual - lineSince > allowed && next !== line) {
-    line = null;
-    bubbleEl.hidden = true;
+  const nextEnd = endVirtual + seconds * 1000;
+  if (nextEnd <= virtual + 40) {
+    endVirtual = virtual;
+    finish();
+    return;
   }
-  if (!next && line && virtual - lineSince > Number(bubbleEl.dataset.hold || 3400)) {
-    line = null;
-    bubbleEl.hidden = true;
+  endVirtual = nextEnd;
+  runSpan = Math.max(1, runSpan + seconds);
+  armed = Math.max(1, Math.round(runSpan));
+  if (mode === "timer") timerSeconds = armed;
+  save();
+  updateUrl();
+  renderChrome();
+}
+
+function commitTyped(raw) {
+  const seconds = parseDuration(raw, { bare: "minutes" });
+  editing = false;
+  typedEl.hidden = true;
+  clockEl.hidden = false;
+  if (!seconds) {
+    showHint("Try 10, 10:00, or 1:30:00.");
+    renderChrome();
+    return;
   }
+  showHint("");
+  if (state === "running" || state === "paused") nudge(seconds - remainingSec());
+  else {
+    armed = seconds;
+    timerSeconds = seconds;
+    save();
+    updateUrl();
+    renderChrome();
+  }
+}
+
+function openEditor() {
+  if (mode !== "timer" || state === "done") return;
+  editing = true;
+  typedEl.value = formatClock(displaySeconds(displayValue()));
+  typedEl.hidden = false;
+  clockEl.hidden = true;
+  typedEl.focus();
+  typedEl.select();
+}
+
+function setMode(next) {
+  if (state !== "idle") reset();
+  mode = next;
+  if (mode === "timer") armed = timerSeconds;
+  if (mode === "alarm") armed = secondsUntilAlarm();
+  if (mode === "stopwatch") {
+    laps = [];
+    renderLaps();
+  }
+  showHint("");
+  updateUrl();
+  save();
+  renderChrome();
+}
+
+function applyTheme(next) {
+  theme = next === "dark" ? "dark" : "light";
+  document.documentElement.dataset.theme = theme;
+  save();
+  renderChrome();
 }
 
 function tone(freq, dur, gain) {
@@ -1088,7 +313,7 @@ function tone(freq, dur, gain) {
     o.type = "sine";
     o.frequency.value = freq;
     g.gain.setValueAtTime(0.0001, now);
-    g.gain.exponentialRampToValueAtTime(gain, now + 0.02);
+    g.gain.exponentialRampToValueAtTime(gain, now + 0.015);
     g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
     o.connect(g);
     g.connect(audioCtx.destination);
@@ -1100,7 +325,7 @@ function tone(freq, dur, gain) {
 }
 
 function boop() {
-  tone(620, 0.09, 0.035);
+  tone(640, 0.08, 0.03);
 }
 
 function chime() {
@@ -1118,190 +343,265 @@ function chime() {
       o.frequency.value = freq;
       const t0 = now + i * 0.07;
       g.gain.setValueAtTime(0.0001, t0);
-      g.gain.exponentialRampToValueAtTime(0.06, t0 + 0.03);
-      g.gain.exponentialRampToValueAtTime(0.0001, t0 + 1.1);
+      g.gain.exponentialRampToValueAtTime(0.05, t0 + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.9);
       o.connect(g);
       g.connect(audioCtx.destination);
       o.start(t0);
-      o.stop(t0 + 1.15);
+      o.stop(t0 + 0.95);
     });
   } catch {
     /* autoplay blocked */
   }
 }
 
-function spawnConfetti() {
-  confettiSpawned = true;
-  const sources = bots.filter((b) => b.state === "landed");
-  const n = prefersReduced() ? 16 : 70;
-  for (let i = 0; i < n; i++) {
-    const spec = PALETTE[i % PALETTE.length];
-    const src = sources.length ? sources[i % sources.length] : { x: width / 2, y: height - 40 };
-    const bot = mount(confettiEl, { kind: spec.kind, fill: spec.fill, dash: !!spec.dash, eye: BOT_EYE }, {
-      id: nextId++,
-      size: 10 + Math.random() * 12,
-      rot: Math.random() * 40 - 20,
-      state: "confetti",
+function buildHero() {
+  heroEl.replaceChildren();
+  hero = createBotElement({ kind: "hero", fill: heroFill(), eye: "#FFFFFF" });
+  hero.svg.style.position = "relative";
+  hero.svg.style.width = "100%";
+  hero.svg.style.height = "100%";
+  hero.id = 0;
+  hero.nextBlink = 1200;
+  hero.blinkStart = 0;
+  hero.dash = false;
+  heroEl.appendChild(hero.svg);
+  setHeroLevel(hero, 0);
+}
+
+function paintHero() {
+  let level = timeProgress();
+  if (mode === "stopwatch" && state !== "idle") {
+    const breath = Math.sin((virtual / 1000) * Math.PI * 2 / 60);
+    level = 0.38 + breath * 0.08;
+  }
+  if (state === "done") level = 1;
+  setHeroLevel(hero, level);
+  const box = heroEl.getBoundingClientRect();
+  const hx = box.left + box.width / 2;
+  const hy = box.top + box.height / 2;
+  let nearest = null;
+  let best = 480;
+  for (const b of bots) {
+    if (b.state !== "drift" && b.state !== "caught") continue;
+    const d = Math.hypot(b.x - hx, b.y - hy);
+    if (d < best) {
+      best = d;
+      nearest = b;
+    }
+  }
+  const target = nearest || { x: hx, y: hy - 40 };
+  const dx = target.x - hx;
+  const dy = target.y - hy;
+  const m = Math.hypot(dx, dy) || 1;
+  if (motionClock > hero.nextBlink) {
+    hero.blinkStart = motionClock;
+    hero.nextBlink = motionClock + 1600 + Math.random() * 1800;
+  }
+  const blinkT = hero.blinkStart ? (motionClock - hero.blinkStart) / 140 : -1;
+  const blink = blinkT < 0 || blinkT > 1 ? 1 : blinkT < 0.45 ? 1 - (blinkT / 0.45) * 0.92 : 0.08 + ((blinkT - 0.45) / 0.55) * 0.92;
+  setEyes(hero, {
+    gazeX: Math.max(-1, Math.min(1, dx / m)),
+    gazeY: Math.max(-1, Math.min(1, dy / m)),
+    blink,
+    eye: "#FFFFFF",
+    fill: heroFill(),
+  });
+}
+
+function spawnDrift() {
+  if (prefersReduced() || state !== "running") return;
+  if (bots.filter((b) => b.state === "drift").length >= 2) return;
+  const spec = PALETTE[Math.floor(Math.random() * PALETTE.length)];
+  const depth = Math.random();
+  const size = 26 + Math.round(depth * 10);
+  const drag = 3.6;
+  const vt = 220 + depth * 140;
+  const bot = createBotElement({ kind: spec.kind, fill: spec.fill, dash: !!spec.dash, eye: "#FFFFFF" });
+  bot.svg.classList.add("bot");
+  worldEl.appendChild(bot.svg);
+  Object.assign(bot, {
+    id: nextId++,
+    state: "drift",
+    size,
+    x: 48 + Math.random() * (width - 96),
+    y: -size - 10,
+    vx: wind * (0.45 + Math.random() * 0.4),
+    vy: 12,
+    drag,
+    grav: vt * drag,
+    rot: (Math.random() - 0.5) * 8,
+    opacity: 0.25 + Math.random() * 0.1,
+    dash: !!spec.dash,
+    nextBlink: motionClock + 800,
+    blinkStart: 0,
+  });
+  bot.svg.style.opacity = String(bot.opacity);
+  bots.push(bot);
+}
+
+function tryCatch(bot) {
+  if (motionClock < nextCatch) return false;
+  const box = heroEl.getBoundingClientRect();
+  const hx = box.left + box.width / 2;
+  const hy = box.top + box.height * 0.55;
+  if (Math.abs(bot.x - hx) > box.width * 0.7) return false;
+  if (bot.y < box.top || bot.y > box.bottom) return false;
+  bot.state = "caught";
+  bot.caughtT = 0;
+  bot.handX = hx;
+  bot.handY = hy + box.height * 0.12;
+  bot.svg.dataset.caught = "1";
+  heroWrapEl.appendChild(bot.svg);
+  nextCatch = motionClock + 14000 + Math.random() * 8000;
+  boop();
+  return true;
+}
+
+function tickBots(dt) {
+  const sec = dt / 1000;
+  for (const bot of bots) {
+    if (bot.state === "drift" && sec > 0) {
+      bot.vy += (bot.grav - bot.drag * bot.vy) * sec;
+      bot.x += bot.vx * sec;
+      bot.y += bot.vy * sec;
+      const fadeStart = height * 0.5;
+      const fadeEnd = height * 0.66;
+      if (bot.y > fadeStart) {
+        const t = Math.min(1, (bot.y - fadeStart) / (fadeEnd - fadeStart));
+        bot.svg.style.opacity = String(bot.opacity * (1 - t));
+      }
+      if (bot.y >= fadeEnd) bot.dead = true;
+      else if (tryCatch(bot)) continue;
+    } else if (bot.state === "caught") {
+      bot.caughtT += dt;
+      const bounce = Math.sin(Math.min(1, bot.caughtT / 380) * Math.PI) * 14;
+      const wrap = heroWrapEl.getBoundingClientRect();
+      const lx = bot.handX - wrap.left;
+      const ly = bot.handY - wrap.top - bounce;
+      bot.svg.style.width = `${bot.size}px`;
+      bot.svg.style.height = `${bot.size}px`;
+      bot.svg.style.transform = `translate(${lx - bot.size / 2}px, ${ly - bot.size / 2}px) rotate(${bot.rot}deg)`;
+      if (bot.caughtT > 520) {
+        const fade = Math.max(0, 1 - (bot.caughtT - 520) / 280);
+        bot.svg.style.opacity = String(fade);
+        if (bot.caughtT > 800) bot.dead = true;
+      }
+      continue;
+    }
+    if (bot.dead) continue;
+    if (motionClock > (bot.nextBlink || 0)) {
+      bot.blinkStart = motionClock;
+      bot.nextBlink = motionClock + 1600 + Math.random() * 2400;
+    }
+    const blinkT = bot.blinkStart ? (motionClock - bot.blinkStart) / 140 : -1;
+    const blink = blinkT < 0 || blinkT > 1 ? 1 : blinkT < 0.45 ? 1 - blinkT / 0.45 * 0.9 : 0.1;
+    setEyes(bot, { gazeX: 0, gazeY: 1, blink, eye: "#FFFFFF" });
+    if (bot.state !== "caught") {
+      bot.svg.style.width = `${bot.size}px`;
+      bot.svg.style.height = `${bot.size}px`;
+      bot.svg.style.transform = `translate(${bot.x - bot.size / 2}px, ${bot.y - bot.size / 2}px) rotate(${bot.rot}deg)`;
+    }
+  }
+  if (bots.some((b) => b.dead)) {
+    bots = bots.filter((b) => {
+      if (!b.dead) return true;
+      b.svg.remove();
+      return false;
     });
-    bot.x = src.x + (Math.random() - 0.5) * 24;
-    bot.y = src.y - 8;
-    bot.vx = (Math.random() - 0.5) * 260;
-    bot.vy = -40 - Math.random() * 150;
-    bot.vr = (Math.random() - 0.5) * 240;
-    bot.life = 2.4 + Math.random() * 0.8;
-    bot.age = 0;
-    confetti.push(bot);
   }
 }
 
-function tickConfetti(dt) {
-  if (confettiAt && !confettiSpawned && performance.now() >= confettiAt) spawnConfetti();
-  const sec = dt / 1000;
-  for (const c of confetti) {
-    c.age += sec;
-    c.vy += 720 * sec;
-    c.x += c.vx * sec;
-    c.y += c.vy * sec;
-    c.rot += c.vr * sec;
-    const fade = Math.max(0, 1 - c.age / c.life);
-    c.svg.style.opacity = String(fade);
-    place(c);
+function tickSpawn() {
+  if (state !== "running" || prefersReduced()) return;
+  if (motionClock < nextSpawnAt) return;
+  spawnDrift();
+  nextSpawnAt = motionClock + 6000 + Math.random() * 4000;
+}
+
+function burst() {
+  confettiEl.replaceChildren();
+  bursts = [];
+  const origin = heroEl.getBoundingClientRect();
+  const ox = origin.left + origin.width / 2;
+  const oy = origin.top + origin.height / 2;
+  for (let i = 0; i < 12; i++) {
+    const spec = PALETTE[i % PALETTE.length];
+    const bot = createBotElement({ kind: spec.kind, fill: spec.fill, dash: !!spec.dash, eye: "#FFFFFF" });
+    bot.svg.classList.add("bot");
+    confettiEl.appendChild(bot.svg);
+    const ang = (i / 12) * Math.PI * 2 + Math.random() * 0.2;
+    const speed = prefersReduced() ? 40 : 140 + Math.random() * 80;
+    Object.assign(bot, {
+      x: ox,
+      y: oy,
+      vx: Math.cos(ang) * speed,
+      vy: Math.sin(ang) * speed - 40,
+      size: 14 + Math.random() * 8,
+      rot: 0,
+      age: 0,
+      life: prefersReduced() ? 0.45 : 1.15,
+    });
+    bursts.push(bot);
   }
-  if (confetti.length && confetti.every((c) => c.age > c.life)) {
-    confetti = [];
+}
+
+function tickBurst(dt) {
+  const sec = dt / 1000;
+  for (const b of bursts) {
+    b.age += sec;
+    b.vy += 280 * sec;
+    b.x += b.vx * sec;
+    b.y += b.vy * sec;
+    const fade = Math.max(0, 1 - b.age / b.life);
+    b.svg.style.opacity = String(fade);
+    b.svg.style.width = `${b.size}px`;
+    b.svg.style.height = `${b.size}px`;
+    b.svg.style.transform = `translate(${b.x - b.size / 2}px, ${b.y - b.size / 2}px)`;
+  }
+  if (bursts.length && bursts.every((b) => b.age > b.life)) {
+    bursts = [];
     confettiEl.replaceChildren();
   }
 }
 
-function setLabel(text, { freeze = false } = {}) {
-  labelFrozen = freeze;
-  eyebrowEl.contentEditable = freeze ? "false" : "true";
-  eyebrowEl.textContent = text;
+function clearMotion() {
+  for (const b of bots) b.svg.remove();
+  bots = [];
+  bursts = [];
+  confettiEl.replaceChildren();
+  heroEl.classList.remove("cheer");
 }
 
 function finish() {
-  if (state === "done") return;
+  if (state === "done" || mode === "stopwatch") return;
   state = "done";
   virtual = endVirtual;
-  finalQueued = true;
-  for (const b of bots) {
-    if (b.state === "falling" || b.state === "splash") {
-      b.state = "landed";
-      b.svg.classList.remove("falling");
-      b.vy = 0;
-      b.svg.style.opacity = "1";
-    }
-  }
-  layoutLanded();
-  for (const b of bots) {
-    if (b.state === "landed" && b.hx != null) {
-      b.x = b.hx;
-      b.y = b.hy;
-    }
-  }
-  worldEl.classList.remove("hop");
-  void worldEl.offsetWidth;
-  worldEl.classList.add("hop");
-  bubbleEl.hidden = true;
-  line = null;
+  for (const b of bots) b.svg.remove();
+  bots = [];
   chime();
-  confettiAt = performance.now() + 520;
-  confettiSpawned = false;
+  burst();
   renderChrome();
 }
 
-function commit(seconds, { runningRetarget = true } = {}) {
-  const next = clampDuration(seconds);
-  if (!next) {
-    showHint("Try 10, 10:00, or 1:30:00.");
-    return false;
-  }
-  showHint("");
-  armed = next;
-  if (mode === "timer") timerSeconds = armed;
-  save();
-  updateUrl();
-  typedEl.value = "";
-  if ((state === "running" || state === "paused") && runningRetarget) {
-    endVirtual = virtual + next * 1000;
-    runSpan = elapsedSec() + next;
-    if (finalQueued && endVirtual > virtual + 900) {
-      finalQueued = false;
-      nextSpawnAt = virtual + 180;
-    }
-    if (endVirtual <= virtual + 40) finish();
-  } else if (state === "done" || state === "idle") {
-    state = "idle";
-    virtual = 0;
-    endVirtual = 0;
-    runSpan = armed;
-    if (!labelFrozen) {
-      /* keep custom label */
-    } else {
-      setLabel(label, { freeze: false });
-    }
-    if (labelFrozen) setLabel(label, { freeze: false });
-    rebuild();
-  }
-  renderChrome();
-  return true;
-}
-
-function shift(ms) {
-  if (state === "done") {
-    state = "idle";
-    commit(Math.max(1, armed + ms / 1000), { runningRetarget: false });
-    return;
-  }
-  if (state === "idle") {
-    commit(armed + ms / 1000, { runningRetarget: false });
-    return;
-  }
-  const nextEnd = endVirtual + ms;
-  if (nextEnd <= virtual + 40) {
-    endVirtual = virtual;
-    finish();
-    return;
-  }
-  endVirtual = nextEnd;
-  runSpan = Math.max(1, runSpan + ms / 1000);
-  armed = Math.max(1, Math.round(runSpan));
-  save();
-  updateUrl();
-  if (finalQueued && endVirtual > virtual + 900) {
-    finalQueued = false;
-    nextSpawnAt = virtual + 180;
-  }
-  if (ms > 0) say("still here with you");
-  renderChrome();
-}
-
-function restart() {
-  stopHeroPlay();
-  setLabel(label, { freeze: false });
-  state = "idle";
+function beginRun() {
   virtual = 0;
-  endVirtual = 0;
-  runSpan = armed;
-  confettiAt = 0;
-  confettiSpawned = false;
-  rebuild();
-  virtual = 0;
+  wind = (Math.random() < 0.5 ? -1 : 1) * (18 + Math.random() * 24);
+  nextSpawnAt = motionClock + 2000 + Math.random() * 2000;
+  nextCatch = motionClock + 9000;
   if (mode === "stopwatch") {
     endVirtual = Number.POSITIVE_INFINITY;
     runSpan = 0;
+    laps = [];
+    renderLaps();
   } else if (mode === "alarm") {
     armed = secondsUntilAlarm();
     endVirtual = armed * 1000;
     runSpan = armed;
   } else {
-    armed = timerSeconds;
     endVirtual = armed * 1000;
     runSpan = armed;
   }
-  nextCatch = motionClock + 2800;
-  armRain();
-  say("on it.");
   state = "running";
   if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
   renderChrome();
@@ -1317,70 +617,57 @@ function startOrPause() {
     restart();
     return;
   }
-  if (state === "idle") {
-    virtual = 0;
-    laps = mode === "stopwatch" ? [] : laps;
-    if (mode === "stopwatch") {
-      endVirtual = Number.POSITIVE_INFINITY;
-      runSpan = 0;
-      renderLaps();
-    } else if (mode === "alarm") {
-      armed = secondsUntilAlarm();
-      endVirtual = armed * 1000;
-      runSpan = armed;
-    } else {
-      endVirtual = armed * 1000;
-      runSpan = armed;
-    }
-    nextCatch = motionClock + 2800;
-    armRain();
-    say("on it.");
+  if (state === "paused") {
+    state = "running";
+    renderChrome();
+    return;
   }
-  state = "running";
-  if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
-  renderChrome();
+  beginRun();
 }
 
 function reset() {
-  stopHeroPlay();
   state = "idle";
   virtual = 0;
   endVirtual = 0;
-  runSpan = armed;
-  setLabel(label, { freeze: false });
-  confettiAt = 0;
-  rebuild();
+  editing = false;
+  typedEl.hidden = true;
+  clockEl.hidden = false;
+  if (mode === "timer") armed = timerSeconds;
+  clearMotion();
+  showHint("");
   renderChrome();
 }
 
-function applyTheme(next) {
-  theme = next === "dark" ? "dark" : "light";
-  document.documentElement.dataset.theme = theme;
-  themeBtn.textContent = theme === "dark" ? "Light" : "Dark";
-  themeBtn.setAttribute("aria-pressed", theme === "dark" ? "true" : "false");
+function restart() {
+  clearMotion();
+  beginRun();
+}
+
+function plusFive() {
+  clearMotion();
+  if (mode === "alarm") {
+    const d = new Date(Date.now() + 5 * 60 * 1000);
+    alarmHHMM = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    $("alarm-time").value = alarmHHMM;
+  } else {
+    mode = "timer";
+    timerSeconds = clampDuration((timerSeconds || armed || 0) + 300) || 300;
+    armed = timerSeconds;
+  }
   save();
-  renderChrome();
+  updateUrl();
+  beginRun();
 }
 
-function buildDecor() {
-  decorEl.replaceChildren();
-  decorBots = [];
-}
-
-function buildHero() {
-  heroEl.replaceChildren();
-  hero = mount(heroEl, { kind: "hero", fill: heroFill(), eye: heroEye() }, {
-    id: 0,
-    size: 160,
-    rot: 0,
-    state: "hero",
-    nextBlink: 1500,
-    blinkStart: 0,
-  });
-  hero.svg.style.position = "relative";
-  hero.svg.style.width = "100%";
-  hero.svg.style.height = "100%";
-  hero.svg.style.transform = "none";
+function revealDock() {
+  if (state !== "running" && state !== "paused") return;
+  focusDock.classList.add("visible");
+  focusDock.setAttribute("aria-hidden", "false");
+  clearTimeout(dockTimer);
+  dockTimer = setTimeout(() => {
+    focusDock.classList.remove("visible");
+    focusDock.setAttribute("aria-hidden", "true");
+  }, 2000);
 }
 
 function boot() {
@@ -1388,7 +675,6 @@ function boot() {
   const params = new URLSearchParams(location.search);
   const fromUrl = params.get("t");
   const alarmParam = parseAlarm(params.get("alarm"));
-  if (stored?.label) label = String(stored.label).slice(0, 32) || label;
   if (stored?.theme) theme = stored.theme === "dark" ? "dark" : "light";
   if (stored?.sound) soundOn = true;
   if (stored?.alarm) alarmHHMM = parseAlarm(stored.alarm) || alarmHHMM;
@@ -1402,22 +688,14 @@ function boot() {
   if (alarmParam) {
     mode = "alarm";
     alarmHHMM = alarmParam;
-  } else if (params.get("mode") === "stopwatch") {
-    mode = "stopwatch";
-  } else if (fromUrl) {
-    mode = "timer";
-  }
+  } else if (params.get("mode") === "stopwatch") mode = "stopwatch";
+  else if (fromUrl) mode = "timer";
   armed = mode === "alarm" ? secondsUntilAlarm() : timerSeconds;
-  const alarmInput = $("alarm-time");
-  if (alarmInput) alarmInput.value = alarmHHMM;
-  runSpan = armed;
-  setLabel(label, { freeze: false });
+  $("alarm-time").value = alarmHHMM;
   applyTheme(theme);
-  buildDecor();
   buildHero();
-  rebuild();
   save();
-  if (fromUrl) updateUrl();
+  updateUrl();
   renderChrome();
   requestAnimationFrame(loop);
 }
@@ -1428,51 +706,17 @@ function loop(ts) {
   motionClock += dt;
   if (state === "running") {
     virtual += dt;
-    if (virtual > endVirtual) virtual = endVirtual;
+    if (mode !== "stopwatch" && virtual > endVirtual) virtual = endVirtual;
     tickSpawn();
-    tickMotion(dt);
-    updateBubble();
+    tickBots(dt);
     if (mode !== "stopwatch" && virtual >= endVirtual) finish();
   } else {
-    tickMotion(0);
+    tickBots(0);
   }
-  tickRetire(dt);
-  if (state === "done") tickPlay(dt);
-  for (const d of decorBots) d.readCenter?.();
-  paintGaze();
-  tickConfetti(dt);
+  tickBurst(dt);
+  paintHero();
   renderChrome();
   requestAnimationFrame(loop);
-}
-
-function setMode(next) {
-  if (state !== "idle") reset();
-  mode = next;
-  if (mode === "timer") armed = timerSeconds;
-  if (mode === "alarm") armed = secondsUntilAlarm();
-  if (mode === "stopwatch") {
-    laps = [];
-    renderLaps();
-  }
-  updateUrl();
-  save();
-  renderChrome();
-}
-
-function plusFive() {
-  stopHeroPlay();
-  if (mode === "alarm") {
-    const d = new Date(Date.now() + 5 * 60 * 1000);
-    alarmHHMM = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-    const input = $("alarm-time");
-    if (input) input.value = alarmHHMM;
-  } else {
-    mode = "timer";
-    timerSeconds = clampDuration((timerSeconds || armed || 0) + 300) || 300;
-    armed = timerSeconds;
-  }
-  save();
-  restart();
 }
 
 themeBtn.addEventListener("click", () => applyTheme(theme === "dark" ? "light" : "dark"));
@@ -1482,8 +726,40 @@ $("sound").addEventListener("click", () => {
   if (soundOn) boop();
   renderChrome();
 });
+startBtn.addEventListener("click", startOrPause);
+focusPauseBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  startOrPause();
+  revealDock();
+});
+$("focus-reset").addEventListener("click", (e) => {
+  e.stopPropagation();
+  reset();
+});
+$("restart").addEventListener("click", restart);
+$("plus-five").addEventListener("click", plusFive);
+$("new-timer").addEventListener("click", reset);
+$("lap").addEventListener("click", () => {
+  if (mode !== "stopwatch" || state !== "running") return;
+  laps.unshift(virtual / 1000);
+  renderLaps();
+  renderChrome();
+});
 for (const btn of document.querySelectorAll(".modes button")) {
   btn.addEventListener("click", () => setMode(btn.dataset.mode));
+}
+for (const btn of document.querySelectorAll("[data-preset]")) {
+  btn.addEventListener("click", () => {
+    const seconds = Number(btn.dataset.preset);
+    if (state === "running" || state === "paused") nudge(seconds - remainingSec());
+    else {
+      armed = seconds;
+      timerSeconds = seconds;
+      save();
+      updateUrl();
+      renderChrome();
+    }
+  });
 }
 $("alarm-time").addEventListener("input", () => {
   const next = parseAlarm($("alarm-time").value);
@@ -1493,124 +769,58 @@ $("alarm-time").addEventListener("input", () => {
   updateUrl();
   renderChrome();
 });
-$("lap").addEventListener("click", () => {
-  if (mode !== "stopwatch" || state !== "running") return;
-  laps.unshift(virtual / 1000);
-  renderLaps();
-  renderChrome();
-});
-$("plus-five").addEventListener("click", plusFive);
-startBtn.addEventListener("click", startOrPause);
-$("reset").addEventListener("click", reset);
-$("minus1").addEventListener("click", () => shift(-60_000));
-$("plus1").addEventListener("click", () => shift(60_000));
-$("plus5").addEventListener("click", () => shift(300_000));
-
-for (const btn of document.querySelectorAll("[data-preset]")) {
-  btn.addEventListener("click", () => {
-    const seconds = Number(btn.dataset.preset);
-    if (state === "running" || state === "paused") commit(seconds);
-    else commit(seconds, { runningRetarget: false });
-  });
-}
-
-$("set-form").addEventListener("submit", (e) => {
-  e.preventDefault();
-  const typed = typedEl.value.trim();
-  const seconds = typed ? parseDuration(typed, { bare: "minutes" }) : fromSteppers();
-  if (!seconds) {
-    showHint("Try 10, 10:00, or 1:30:00.");
-    return;
-  }
-  if (state === "running" || state === "paused") commit(seconds);
-  else commit(seconds, { runningRetarget: false });
-});
-
-for (const input of [hhEl, mmEl, ssEl]) {
-  input.addEventListener("input", () => {
-    if (state !== "idle") return;
-    const seconds = fromSteppers();
-    if (seconds) commit(seconds, { runningRetarget: false });
-  });
-  input.addEventListener("wheel", (e) => e.preventDefault(), { passive: false });
-}
-
-eyebrowEl.addEventListener("keydown", (e) => {
+clockEl.addEventListener("click", openEditor);
+typedEl.addEventListener("keydown", (e) => {
   if (e.key === "Enter") {
     e.preventDefault();
-    eyebrowEl.blur();
+    commitTyped(typedEl.value);
+  } else if (e.key === "Escape") {
+    editing = false;
+    typedEl.hidden = true;
+    clockEl.hidden = false;
+    renderChrome();
   }
 });
-eyebrowEl.addEventListener("paste", (e) => {
+typedEl.addEventListener("blur", () => {
+  if (editing) commitTyped(typedEl.value);
+});
+clockEl.addEventListener("wheel", (e) => {
+  if (mode === "stopwatch" || state === "done") return;
   e.preventDefault();
-  const text = (e.clipboardData?.getData("text") || "").replace(/\s+/g, " ").trim().slice(0, 32);
-  eyebrowEl.textContent = text;
-});
-eyebrowEl.addEventListener("blur", () => {
-  if (labelFrozen) return;
-  const text = (eyebrowEl.textContent || "").replace(/\s+/g, " ").trim().slice(0, 32);
-  label = text || "BUILD TIME";
-  eyebrowEl.textContent = label;
-  save();
-});
-
-const focusDock = $("focus-dock");
-const focusPauseBtn = $("focus-pause");
-const focusResetBtn = $("focus-reset");
-let dockTimer = 0;
-
-function revealDock() {
-  if (state !== "running" && state !== "paused") return;
-  focusDock.classList.add("visible");
-  focusDock.setAttribute("aria-hidden", "false");
-  clearTimeout(dockTimer);
-  dockTimer = setTimeout(() => {
-    focusDock.classList.remove("visible");
-    focusDock.setAttribute("aria-hidden", "true");
-  }, 2000);
-}
-
-focusPauseBtn.addEventListener("click", (e) => {
-  e.stopPropagation();
-  startOrPause();
-  revealDock();
-});
-focusResetBtn.addEventListener("click", (e) => {
-  e.stopPropagation();
-  reset();
-});
-window.addEventListener("pointermove", revealDock);
-window.addEventListener("pointerdown", revealDock);
-
-$("restart").addEventListener("click", restart);
-$("new-timer").addEventListener("click", reset);
+  nudge(e.deltaY > 0 ? -60 : 60);
+}, { passive: false });
 
 window.addEventListener("keydown", (e) => {
   const tag = document.activeElement?.tagName;
-  const typing = tag === "INPUT" || tag === "TEXTAREA" || document.activeElement?.isContentEditable;
+  const typing = tag === "INPUT" || tag === "TEXTAREA";
   if (e.key === "Escape" && state !== "idle") {
     if (typing) return;
     e.preventDefault();
     reset();
     return;
   }
-  if (typing || tag === "BUTTON") return;
-  const space = e.key === " " || e.code === "Space";
-  if (state === "done" && (space || e.key === "Enter")) {
+  if (state === "done" && e.key === "Enter" && !typing) {
     e.preventDefault();
     restart();
     return;
   }
-  if (!space) return;
+  if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !typing) {
+    e.preventDefault();
+    const dir = e.key === "ArrowUp" ? 1 : -1;
+    nudge(dir * (e.shiftKey ? 1 : 60));
+    return;
+  }
+  if (e.key !== " " && e.code !== "Space") return;
+  if (typing) return;
   e.preventDefault();
   startOrPause();
 });
 
+window.addEventListener("pointermove", revealDock);
+window.addEventListener("pointerdown", revealDock);
 window.addEventListener("resize", () => {
   width = window.innerWidth;
   height = window.innerHeight;
-  rebuildFrame();
-  layoutLanded();
 });
 
 boot();

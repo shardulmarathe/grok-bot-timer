@@ -55,16 +55,14 @@ try {
   const before = await stats(page);
   await page.click("#start");
   await page.waitForFunction(() => document.body.dataset.state === "running");
-  await page.$eval("#plus1", (el) => el.click());
+  await page.keyboard.press("ArrowUp");
   await page.waitForFunction(() => Number(document.querySelector("#clock").dataset.remaining) > 650);
   const after = await stats(page);
   if (!(after.remaining > 650 && after.remaining < 670)) {
     throw new Error(`+1 min remaining out of range: ${after.remaining}`);
   }
-  const topSize = await page.$$eval("[data-edge='top']", (els) =>
-    Math.min(...els.map((el) => parseFloat(el.style.width) || 0)),
-  );
-  if (!(topSize >= 56)) throw new Error(`top bots too small: ${topSize}`);
+  const hero = await page.$eval(".hero-wrap", (el) => el.getBoundingClientRect().height);
+  if (hero < 200) throw new Error(`hero too small: ${hero}`);
   await page.screenshot({ path: path.join(OUT, "running-10m.png") });
 
   await page.goto(`${BASE}/?t=10s`, { waitUntil: "networkidle0" });
@@ -78,13 +76,12 @@ try {
   const done = await stats(page);
   const doneClock = await clock(page);
   const title = await page.$eval("#end-title", (el) => el.textContent.trim());
-  const endOpacity = await page.$eval("#end-screen", (el) => getComputedStyle(el).opacity);
+  const endScreenHidden = await page.$eval("#end-screen", (el) => el.hidden);
   const confetti = await page.$eval("#confetti", (el) => el.querySelectorAll("svg").length);
   if (doneClock !== "00:00") throw new Error(`end clock ${doneClock}`);
-  if (done.landed < 1) throw new Error(`expected landed rain, got ${done.landed}`);
   if (title !== "Time's Up") throw new Error(`title ${title}`);
-  if (Number(endOpacity) < 0.9) throw new Error(`end opacity ${endOpacity}`);
-  if (confetti < 10) throw new Error(`confetti ${confetti}`);
+  if (endScreenHidden) throw new Error("end screen hidden");
+  if (confetti < 8) throw new Error(`confetti ${confetti}`);
   await page.screenshot({ path: path.join(OUT, "done.png") });
 
   await page.evaluate(() => localStorage.clear());
@@ -94,15 +91,19 @@ try {
   if ((await clock(page)) !== "1:30:00") throw new Error(`?t=1h30m showed ${await clock(page)}`);
 
   await page.goto(`${BASE}/?t=10m`, { waitUntil: "networkidle0" });
+  await page.click("#clock");
   await page.$eval("#typed", (el) => {
     el.value = "1:30:00";
   });
-  await page.click("#set-btn");
+  await page.focus("#typed");
+  await page.keyboard.press("Enter");
   await page.waitForFunction(() => document.querySelector("#clock")?.textContent.trim() === "1:30:00");
+  await page.click("#clock");
   await page.$eval("#typed", (el) => {
     el.value = "10";
   });
-  await page.click("#set-btn");
+  await page.focus("#typed");
+  await page.keyboard.press("Enter");
   await page.waitForFunction(() => document.querySelector("#clock")?.textContent.trim() === "10:00");
 
   const realErrors = errors.filter(

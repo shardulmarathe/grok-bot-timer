@@ -6,159 +6,101 @@
     <title>Grok Bot Timer</title>
     <meta
       name="description"
-      content="A full-screen Grok Bot countdown. Set any duration, share it with a link, and watch the bots land at zero."
+      content="A quiet Grok Bot timer. Set a duration, count up, or wait for an alarm."
     />
     <link rel="icon" href="%BASE_URL%favicon.svg" type="image/svg+xml" />
     <meta name="theme-color" content="#ffffff" />
   </head>
   <body>
-    <svg id="sketch" viewBox="0 0 120 120" aria-hidden="true">
-      <circle class="sk" cx="60" cy="60" r="54" />
-      <g class="sk-eyes" transform="translate(60 50) rotate(15)">
-        <rect class="sk" x="-13.4" y="-11" width="8.2" height="22" rx="4.1" />
-        <rect class="sk" x="5.2" y="-11" width="8.2" height="22" rx="4.1" />
-      </g>
-    </svg>
-    <div id="decor"></div>
     <div id="world" data-bots="0" data-landed="0" data-air="0"></div>
     <div id="confetti"></div>
     <main class="ui">
       <header class="top">
-        <div class="mark" aria-label="SpaceX">
-          <svg viewBox="0 0 122 18" role="img" aria-label="SpaceX">
+        <div class="mark" aria-label="SpaceXAI">
+          <svg viewBox="0 0 214 32" role="img" aria-label="SpaceXAI">
+            <circle class="mark-plate" cx="16" cy="16" r="15.5" />
+            <circle cx="16" cy="16" r="13" fill="#0A0A0A" />
+            <g transform="translate(16 14.6) rotate(15)" fill="#FFFFFF">
+              <rect x="-5.4" y="-3.3" width="3.2" height="8.2" rx="1.6" />
+              <rect x="2.2" y="-3.3" width="3.2" height="8.2" rx="1.6" />
+            </g>
             <text
-              x="0"
-              y="14"
+              x="40"
+              y="23"
               fill="currentColor"
               font-family="Inter, sans-serif"
-              font-size="15"
+              font-size="20"
               font-weight="700"
-              letter-spacing="1.7"
+              letter-spacing="0.2"
             >
-              SPACEX
+              SpaceXAI
             </text>
-            <path
-              d="M48 2.4c16 .1 32-.2 52 1.3"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.25"
-              stroke-linecap="round"
-            />
           </svg>
         </div>
         <div class="top-actions">
-          <button type="button" class="pill" id="sound" aria-pressed="false">Sound off</button>
-          <button type="button" class="pill" id="theme">Dark</button>
+          <button type="button" class="icon" id="sound" aria-pressed="false" aria-label="Sound off">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor" />
+              <path class="sound-on" d="M16 9.2a4 4 0 0 1 0 5.6M18.2 7a7 7 0 0 1 0 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+            </svg>
+          </button>
+          <button type="button" class="icon" id="theme" aria-label="Dark theme" aria-pressed="false">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="4.2" fill="currentColor" />
+              <g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+                <path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5 5l1.6 1.6M17.4 17.4 19 19M19 5l-1.6 1.6M6.6 17.4 5 19" />
+              </g>
+            </svg>
+          </button>
         </div>
       </header>
 
       <section class="stage">
-        <p
-          class="eyebrow"
-          id="eyebrow"
-          contenteditable="true"
-          spellcheck="false"
-          role="textbox"
-          aria-label="Timer label"
-        >
-          BUILD TIME
-        </p>
+        <div class="modes" role="tablist" aria-label="Mode">
+          <button type="button" id="mode-timer" data-mode="timer" role="tab" aria-selected="true">Timer</button>
+          <button type="button" id="mode-stopwatch" data-mode="stopwatch" role="tab" aria-selected="false">Stopwatch</button>
+          <button type="button" id="mode-alarm" data-mode="alarm" role="tab" aria-selected="false">Alarm</button>
+        </div>
 
-        <div class="clock-row" id="clock-row">
-          <div class="clock-cluster" id="clock-cluster">
-            <p class="digits" id="clock" data-remaining="600" data-face="10:00"><span class="slot">1</span><span class="slot">0</span><span class="colon">:</span><span class="slot">0</span><span class="slot">0</span></p>
-            <div class="hero-wrap">
-              <div class="bubble" id="bubble" hidden>on it.</div>
-              <div class="hero" id="hero"></div>
+        <div class="clock-stack" id="clock-cluster">
+          <div class="hero-wrap">
+            <div class="hero" id="hero"></div>
+          </div>
+          <p class="digits" id="clock" data-remaining="600" data-face="10:00" tabindex="0">
+            <span class="slot">1</span><span class="slot">0</span><span class="colon">:</span><span class="slot">0</span><span class="slot">0</span>
+          </p>
+          <input id="typed" class="digits-edit" hidden aria-label="Type a duration" autocomplete="off" spellcheck="false" />
+          <p class="sub" id="sub">Ends —</p>
+          <div id="end-screen" class="finale" hidden>
+            <h1 class="end-title" id="end-title">Time's Up</h1>
+            <div class="end-actions">
+              <button type="button" class="pill primary" id="restart">Restart</button>
+              <button type="button" class="pill" id="plus-five">+5 min</button>
+              <button type="button" class="pill" id="new-timer">New timer</button>
             </div>
           </div>
         </div>
 
-        <p class="sub" id="sub">Ends —</p>
-        <p class="done-line" id="done-line" hidden>Build something that works.</p>
-
         <div class="controls">
-          <div class="modes" role="tablist" aria-label="Mode">
-            <button type="button" id="mode-timer" data-mode="timer" role="tab" aria-selected="true">Timer</button>
-            <button type="button" id="mode-stopwatch" data-mode="stopwatch" role="tab" aria-selected="false">Stopwatch</button>
-            <button type="button" id="mode-alarm" data-mode="alarm" role="tab" aria-selected="false">Alarm</button>
-          </div>
           <div class="presets timer-only" role="group" aria-label="Presets">
             <button type="button" class="pill" data-preset="60">1m</button>
             <button type="button" class="pill" data-preset="300">5m</button>
             <button type="button" class="pill" data-preset="600">10m</button>
-            <button type="button" class="pill" data-preset="900">15m</button>
             <button type="button" class="pill" data-preset="1500">25m</button>
-            <button type="button" class="pill" data-preset="7200">2h</button>
+            <button type="button" class="pill" data-preset="3600">1h</button>
           </div>
-
-          <hr class="rule" />
-
-          <form id="set-form" class="set timer-only">
-            <div class="set-label">Set time</div>
-            <div class="set-row">
-              <label class="step">
-                <span class="sr-only">Hours</span>
-                <input id="hh" type="number" min="0" max="12" inputmode="numeric" value="0" aria-label="Hours" />
-                <span>h</span>
-              </label>
-              <label class="step">
-                <span class="sr-only">Minutes</span>
-                <input id="mm" type="number" min="0" max="720" inputmode="numeric" value="10" aria-label="Minutes" />
-                <span>m</span>
-              </label>
-              <label class="step">
-                <span class="sr-only">Seconds</span>
-                <input id="ss" type="number" min="0" max="59" inputmode="numeric" value="0" aria-label="Seconds" />
-                <span>s</span>
-              </label>
-              <input
-                id="typed"
-                class="typed"
-                type="text"
-                inputmode="text"
-                autocomplete="off"
-                spellcheck="false"
-                placeholder="10, 10:00, or 1:30:00"
-                aria-label="Type a duration"
-              />
-              <button type="submit" class="pill" id="set-btn">Set</button>
-            </div>
-            <p class="hint" id="hint" hidden></p>
+          <form id="alarm-form" class="alarm-only">
+            <input id="alarm-time" type="time" value="16:30" aria-label="Alarm time" />
           </form>
-
-          <form id="alarm-form" class="set alarm-only">
-            <div class="set-label">Alarm time</div>
-            <div class="set-row">
-              <input id="alarm-time" class="typed" type="time" value="16:30" aria-label="Alarm time" />
-            </div>
-          </form>
-          <div class="watch-only laps-wrap">
-            <button type="button" class="pill" id="lap">Lap</button>
-            <ol id="laps"></ol>
-          </div>
-          <div class="adjust timer-only" role="group" aria-label="Adjust running time">
-            <button type="button" class="pill" id="minus1">−1 min</button>
-            <button type="button" class="pill" id="plus1">+1 min</button>
-            <button type="button" class="pill" id="plus5">+5 min</button>
-          </div>
-
+          <p class="hint" id="hint" hidden></p>
           <div class="transport">
+            <button type="button" class="pill ghost watch-only" id="lap">Lap</button>
             <button type="button" class="pill primary" id="start">Start</button>
-            <button type="button" class="pill" id="reset">Reset</button>
           </div>
+          <ol id="laps" class="watch-only"></ol>
         </div>
       </section>
     </main>
-    <div id="play-layer" aria-hidden="true"></div>
-    <section id="end-screen" class="end-screen" aria-hidden="true">
-      <h1 class="end-title" id="end-title">Time's Up</h1>
-      <div class="end-actions">
-        <button type="button" class="pill primary" id="restart">Restart</button>
-        <button type="button" class="pill" id="plus-five">+5 min</button>
-        <button type="button" class="pill" id="new-timer">New timer</button>
-      </div>
-    </section>
     <div id="focus-dock" aria-hidden="true">
       <button type="button" class="pill" id="focus-pause">Pause</button>
       <button type="button" class="pill" id="focus-reset">Reset</button>
