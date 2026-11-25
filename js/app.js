@@ -837,27 +837,65 @@ function stepBob() {
   heroEl.style.transform = `translate(${x.toFixed(2)}px, ${y.toFixed(2)}px)`;
 }
 
+let jumpRoom = null;
+
+function measureJumpRoom() {
+  const prev = heroEl.style.transform;
+  heroEl.style.transform = "none";
+  const box = heroEl.getBoundingClientRect();
+  heroEl.style.transform = prev;
+  const margin = 12;
+  const up = Math.max(24, box.top - margin);
+  const side = Math.max(10, Math.min(box.left - margin, window.innerWidth - box.right - margin));
+  return {
+    up: Math.min(74, up),
+    side: Math.min(42, side),
+  };
+}
+
+function jumpArc(u) {
+  const t = Math.max(0, Math.min(1, u));
+  if (t < 0.42) {
+    const p = t / 0.42;
+    return 1 - (1 - p) * (1 - p);
+  }
+  const p = (t - 0.42) / 0.58;
+  const s = p * p * (3 - 2 * p);
+  return 1 - s;
+}
+
 function danceHero() {
   if (!heroEl) return;
   if (state !== "done") {
+    jumpRoom = null;
+    heroEl.style.transformOrigin = "";
     stepBob();
     return;
   }
-  if (prefersReduced()) {
-    const sway = Math.sin(motionClock / 980) * 8;
-    heroEl.style.transform = `translateX(${sway.toFixed(2)}px)`;
-    return;
+  if (!jumpRoom) jumpRoom = measureJumpRoom();
+  const reduced = prefersReduced();
+  const cycle = reduced ? 2200 : 1680;
+  const u = (motionClock % cycle) / cycle;
+  let air = 0;
+  let dir = 1;
+  let gain = 0;
+  if (u < 0.46) {
+    air = u / 0.46;
+    dir = 1;
+    gain = 1;
+  } else if (u >= 0.54 && u < 0.88) {
+    air = (u - 0.54) / 0.34;
+    dir = -1;
+    gain = 0.62;
   }
-  const t = (motionClock % 5200) / 5200;
-  const turn = t * Math.PI * 2;
-  const x = Math.sin(turn * 2) * 56;
-  const hop = Math.abs(Math.sin(turn * 2));
-  const y = -hop * 26 + Math.sin(turn * 4) * -4;
-  const squash = 1 + Math.cos(turn * 4) * 0.09;
-  const sx = (1 / squash) * (1 + Math.sin(turn * 2) * 0.035);
-  const sy = squash;
-  const rot = Math.sin(turn * 2) * 11 + Math.sin(turn) * 5;
-  heroEl.style.transform = `translate(${x.toFixed(2)}px, ${y.toFixed(2)}px) rotate(${rot.toFixed(2)}deg) scale(${sx.toFixed(3)}, ${sy.toFixed(3)})`;
+  const lift = air ? jumpArc(air) * gain : 0;
+  const travel = air ? Math.sin(air * Math.PI) * gain : 0;
+  const quiet = reduced ? 0.34 : 1;
+  const x = travel * dir * jumpRoom.side * quiet;
+  const y = -lift * jumpRoom.up * quiet;
+  const rot = travel * dir * (reduced ? 3 : 7.5);
+  heroEl.style.transformOrigin = "center center";
+  heroEl.style.transform = `translate(${x.toFixed(2)}px, ${y.toFixed(2)}px) rotate(${rot.toFixed(2)}deg)`;
 }
 
 function tryCatch(bot) {
@@ -1530,6 +1568,7 @@ window.addEventListener("pointerdown", revealDock);
 window.addEventListener("resize", () => {
   width = window.innerWidth;
   height = window.innerHeight;
+  jumpRoom = null;
   document.body.classList.toggle("is-coarse", window.matchMedia("(pointer: coarse)").matches || width < 720);
 });
 document.addEventListener("visibilitychange", onVisibleAgain);
