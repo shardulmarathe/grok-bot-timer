@@ -8,7 +8,7 @@ import {
   formatEndTime,
 } from "./time.js";
 import { createBotElement, setEyes, setHeroLevel, PALETTE } from "./shapes.js";
-import { chooseFill, readableBody } from "./color.js";
+import { chooseFill, eyeColorFor } from "./color.js";
 import { alarmColumns, mountWheel, relayoutWheel, setWheel, timerColumns } from "./wheel.js";
 
 const STORE_KEY = "grok-bot-timer";
@@ -295,8 +295,12 @@ function mixHex(from, to, t) {
 }
 
 function heroFill() {
-  if (botColor) return readableBody(botColor);
-  return theme === "dark" ? "#2E2E33" : "#0A0A0A";
+  if (botColor) return botColor;
+  return theme === "dark" ? "#FFFFFF" : "#0A0A0A";
+}
+
+function heroEye() {
+  return eyeColorFor(heroFill());
 }
 
 function pageColor() {
@@ -340,8 +344,9 @@ function applyAppearance() {
   if (hero?.body) {
     const circle = hero.body.querySelector("circle");
     if (circle) {
-      if (luminance(body) > 0.62) {
-        circle.setAttribute("stroke", "#0A0A0A");
+      const page = pageColor();
+      if (Math.abs(luminance(body) - luminance(page)) < 0.12) {
+        circle.setAttribute("stroke", luminance(page) > 0.5 ? "#0A0A0A" : "#FFFFFF");
         circle.setAttribute("stroke-width", "2.5");
       } else {
         circle.removeAttribute("stroke");
@@ -351,6 +356,7 @@ function applyAppearance() {
   }
   hero?.eyes?.querySelector(".eye-back")?.remove();
   if (hero?.liquid) hero.liquid.setAttribute("fill", fill);
+  setFavicon(state === "done");
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.content = bgValue && !bgValue.startsWith("linear") ? bgValue : theme === "dark" ? "#000000" : "#ffffff";
 }
@@ -621,7 +627,7 @@ function chime() {
 
 function buildHero() {
   heroEl.replaceChildren();
-  hero = createBotElement({ kind: "hero", fill: heroFill(), eye: "#FFFFFF" });
+  hero = createBotElement({ kind: "hero", fill: heroFill(), eye: heroEye() });
   hero.svg.style.position = "relative";
   hero.svg.style.width = "100%";
   hero.svg.style.height = "100%";
@@ -704,7 +710,7 @@ function paintHero() {
     gazeX: hero.lookX,
     gazeY: hero.lookY,
     blink,
-    eye: "#FFFFFF",
+    eye: heroEye(),
     fill: heroFill(),
   });
 }
@@ -1315,11 +1321,19 @@ function unlockAudio() {
   }
 }
 
+let faviconKey = "";
+
 function setFavicon(alert) {
   const link = document.querySelector("link[rel='icon']");
   if (!link) return;
-  const base = import.meta.env.BASE_URL || "./";
-  link.href = `${base}${alert ? "favicon-alert.svg" : "favicon.svg"}`;
+  const body = heroFill();
+  const eye = heroEye();
+  const key = `${body}|${eye}|${alert ? 1 : 0}`;
+  if (key === faviconKey) return;
+  faviconKey = key;
+  const badge = alert ? `<circle cx="26" cy="6" r="4.2" fill="#9B6BFF"/>` : "";
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="${body}"/><g transform="translate(16 15.2) rotate(15)" fill="${eye}"><rect x="-6.1" y="-3.1" width="3.7" height="8.6" rx="1.85"/><rect x="2.4" y="-3.1" width="3.7" height="8.6" rx="1.85"/></g>${badge}</svg>`;
+  link.href = `data:image/svg+xml,${encodeURIComponent(svg)}`;
 }
 
 function updateTitle() {

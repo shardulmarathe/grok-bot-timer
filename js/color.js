@@ -116,29 +116,51 @@ function inGamutFill(hue, chroma, L) {
   return { hex, got: hexToOklch(hex) };
 }
 
-export function contrastOnWhite(hex) {
+function relY(hex) {
   const rgb = parseHex(hex) || [0, 0, 0];
   const channel = (c) => {
     const s = c / 255;
     return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
   };
-  const y = 0.2126 * channel(rgb[0]) + 0.7152 * channel(rgb[1]) + 0.0722 * channel(rgb[2]);
-  return 1.05 / (y + 0.05);
+  return 0.2126 * channel(rgb[0]) + 0.7152 * channel(rgb[1]) + 0.0722 * channel(rgb[2]);
+}
+
+export function contrastRatio(a, b) {
+  const ya = relY(a);
+  const yb = relY(b);
+  const hi = Math.max(ya, yb);
+  const lo = Math.min(ya, yb);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+export function contrastOnWhite(hex) {
+  return contrastRatio("#ffffff", hex);
+}
+
+/** Black pills on a light body, white pills otherwise. */
+export function eyeColorFor(botHex) {
+  return hexToOklch(botHex).L > 0.7 ? "#0A0A0A" : "#FFFFFF";
+}
+
+function eyesOnFillOk(fill, eye) {
+  return contrastRatio(fill, eye) >= (eye === "#0A0A0A" ? 4.5 : 3);
 }
 
 function eyesOk(hex) {
   return contrastOnWhite(hex) >= 3;
 }
 
-function searchFill(hue, chroma, bot, bg, preferL) {
-  const lights = [preferL, 0.4, 0.34, 0.46, 0.3, 0.5, 0.26, 0.38];
+function searchFill(hue, chroma, bot, bg, preferL, eye) {
+  const lights = eye === "#0A0A0A"
+    ? [preferL, 0.78, 0.84, 0.72, 0.88, 0.68]
+    : [preferL, 0.4, 0.34, 0.46, 0.3, 0.5, 0.26, 0.38];
   let best = null;
   for (const L of lights) {
     const { hex, got } = inGamutFill(hue, chroma, L);
     if (got.C < 0.12) continue;
-    if (!eyesOk(hex)) continue;
+    if (!eyesOnFillOk(hex, eye)) continue;
     if (!contrastOk(got, bot) || !contrastOk(got, bg)) continue;
-    const score = got.C * 3 + Math.abs(got.L - bot.L) + Math.abs(got.L - bg.L) * 0.4;
+    const score = got.C * 3 + Math.abs(got.L - bot.L) + Math.abs(got.L - bg.L) * 0.35;
     if (!best || score > best.score) best = { hex, score };
   }
   return best?.hex || null;
@@ -153,26 +175,28 @@ export function chooseFill(botHex, bgHex, customHex = "") {
   const bot = hexToOklch(botHex);
   bot.hex = botHex;
   const bg = hexToOklch(bgHex || "#ffffff");
-  const chroma = bot.C < 0.045 ? 0.19 : Math.min(0.22, Math.max(0.16, bot.C * 0.45 + 0.12));
-  const preferL = 0.4;
+  const eye = eyeColorFor(botHex);
+  const chroma = bot.C < 0.045 ? 0.16 : Math.min(0.2, Math.max(0.14, bot.C * 0.4 + 0.1));
+  const preferL = eye === "#0A0A0A" ? 0.8 : 0.4;
   const hues = hueCandidates(bot, bg);
+  const fallback = eye === "#0A0A0A" ? "#C4B5FD" : "#5B2FD6";
 
   if (customHex && parseHex(customHex)) {
     const custom = hexToOklch(customHex);
     const grey = custom.C < 0.06;
-    const weak = !contrastOk(custom, bot) || !contrastOk(custom, bg);
-    if (!grey && !weak && custom.C >= 0.12 && eyesOk(customHex)) return normalizeHex(customHex);
+    const weak = !contrastOk(custom, bot) || !contrastOk(custom, bg) || !eyesOnFillOk(customHex, eye);
+    if (!grey && !weak && custom.C >= 0.12) return normalizeHex(customHex);
     const keepHue = grey ? hues[0] : custom.H;
-    const tuned = searchFill(keepHue, Math.max(0.17, grey ? chroma : custom.C), bot, bg, grey ? preferL : custom.L)
-      || hues.map((hue) => searchFill(hue, chroma, bot, bg, preferL)).find(Boolean);
+    const tuned = searchFill(keepHue, Math.max(0.14, grey ? chroma : custom.C), bot, bg, grey ? preferL : custom.L, eye)
+      || hues.map((hue) => searchFill(hue, chroma, bot, bg, preferL, eye)).find(Boolean);
     if (tuned) return tuned;
   }
 
   for (const hue of hues) {
-    const found = searchFill(hue, chroma, bot, bg, preferL);
+    const found = searchFill(hue, chroma, bot, bg, preferL, eye);
     if (found) return found;
   }
-  return searchFill(292, 0.18, bot, bg, 0.38) || "#5B2FD6";
+  return searchFill(292, 0.16, bot, bg, preferL, eye) || fallback;
 }
 
 /** Deepen a custom bot color until white eyes clear roughly 3:1, keeping its hue. */
