@@ -96,8 +96,84 @@ export function toParam(seconds) {
   return out;
 }
 
-export function formatEndTime(date) {
-  return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+/** Next whole second. An exact second is left alone, so the label is never earlier than the finish. */
+export function ceilEndMs(ms) {
+  return Math.ceil(ms / 1000) * 1000;
+}
+
+/** Setup target: this instant plus the wheel duration. */
+export function setupEndMs(nowMs, durationSec) {
+  return nowMs + Math.round(durationSec) * 1000;
+}
+
+/** Milliseconds left until an absolute target. Late ticks do not accumulate error. */
+export function remainingMs(nowMs, endAtMs) {
+  return Math.max(0, endAtMs - nowMs);
+}
+
+/**
+ * Local wall time, with seconds, ceiled so it is not earlier than `date`.
+ * `locales` defaults to the user's locale.
+ */
+export function formatEndTime(date, locales) {
+  const ms = date instanceof Date ? date.getTime() : Number(date);
+  const shown = new Date(ceilEndMs(ms));
+  return shown.toLocaleTimeString(locales, {
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+/**
+ * End-time clock for the timer.
+ * Setup recomputes now + duration. Running keeps the absolute target from Start.
+ * Pause freezes the remaining time; resume captures a new target.
+ */
+export function createEndClock({ now = () => Date.now(), durationSec = 0 } = {}) {
+  let status = "idle";
+  let duration = Math.max(0, Math.round(durationSec));
+  let endAt = 0;
+  let remain = 0;
+  const target = () => {
+    if (status === "running") return endAt;
+    if (status === "paused") return now() + remain;
+    return setupEndMs(now(), duration);
+  };
+  return {
+    get status() {
+      return status;
+    },
+    get endAt() {
+      return endAt;
+    },
+    setDuration(sec) {
+      duration = Math.max(0, Math.round(sec));
+    },
+    start() {
+      endAt = setupEndMs(now(), duration);
+      status = "running";
+      return endAt;
+    },
+    pause() {
+      remain = remainingMs(now(), endAt);
+      status = "paused";
+      return remain;
+    },
+    resume() {
+      endAt = now() + remain;
+      status = "running";
+      return endAt;
+    },
+    remainingSec() {
+      if (status === "running") return remainingMs(now(), endAt) / 1000;
+      if (status === "paused") return remain / 1000;
+      return duration;
+    },
+    label(locales = "en-US") {
+      return formatEndTime(target(), locales);
+    },
+  };
 }
 
 /**

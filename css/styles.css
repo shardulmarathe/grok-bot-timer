@@ -334,6 +334,7 @@ body[data-state="paused"] #clock {
 }
 
 .wheel {
+  position: relative;
   display: flex;
   align-items: stretch;
   justify-content: center;
@@ -342,7 +343,7 @@ body[data-state="paused"] #clock {
   max-width: none;
   margin-inline: auto;
   user-select: none;
-  touch-action: none;
+  touch-action: pan-y;
 }
 #clock.face {
   display: flex;
@@ -370,10 +371,11 @@ body[data-state="paused"] #clock {
   height: 100%;
   overflow-y: auto;
   scroll-snap-type: y mandatory;
+  scroll-snap-stop: normal;
   scrollbar-width: none;
   overscroll-behavior: contain;
   touch-action: pan-y;
-  mask-image: linear-gradient(to bottom, transparent, #000 22%, #000 78%, transparent);
+  will-change: transform;
 }
 .wheel-col::-webkit-scrollbar { display: none; }
 .wheel-col[data-unit="p"] { width: clamp(52px, 7vmin, 96px); }
@@ -388,9 +390,16 @@ body[data-state="paused"] #clock {
   font-weight: 500;
   font-size: clamp(18px, 3.4vmin, 40px);
   font-variant-numeric: tabular-nums;
-  color: var(--ink);
+  color: color-mix(in srgb, var(--ink) 42%, transparent);
 }
-.wheel-item[aria-selected="true"] { font-weight: 600; }
+.wheel-item[aria-selected="true"] { color: var(--ink); }
+.wheel-fade {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background: linear-gradient(to bottom, var(--bg) 0%, transparent 30%, transparent 70%, var(--bg) 100%);
+}
 .wheel-colon {
   align-self: center;
   width: 14px;

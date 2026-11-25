@@ -6,6 +6,8 @@ import {
   displaySeconds,
   toParam,
   formatEndTime,
+  setupEndMs,
+  remainingMs,
 } from "./time.js";
 import { createBotElement, setEyes, setHeroLevel, PALETTE } from "./shapes.js";
 import { chooseFill, eyeColorFor } from "./color.js";
@@ -163,8 +165,27 @@ function remainingSec() {
   if (state === "idle") return armed;
   if (state === "done") return 0;
   if (state === "paused") return Math.max(0, remainMs / 1000);
-  if (endAt) return Math.max(0, (endAt - wallNow()) / 1000);
+  if (endAt) return remainingMs(wallNow(), endAt) / 1000;
   return armed;
+}
+
+let previewTimerSeconds = null;
+
+function liveTimerSeconds() {
+  if (mode === "timer" && state === "idle" && previewTimerSeconds != null) return previewTimerSeconds;
+  return mode === "timer" ? timerSeconds : armed;
+}
+
+function timerTargetMs() {
+  if (state === "running" && endAt) return endAt;
+  if (state === "paused") return wallNow() + remainMs;
+  return setupEndMs(wallNow(), liveTimerSeconds());
+}
+
+function setSub(text) {
+  if (subEl.dataset.label === text) return;
+  subEl.dataset.label = text;
+  subEl.textContent = text;
 }
 
 function displayValue() {
@@ -417,9 +438,9 @@ function renderChrome() {
   updateTitle();
 
   if (state !== "done") {
-    if (mode === "alarm") subEl.textContent = state === "idle" ? "Set an alarm" : `until ${formatEndTime(alarmDate())}`;
-    else if (mode === "stopwatch") subEl.textContent = laps.length ? `${laps.length} lap${laps.length === 1 ? "" : "s"}` : "Counting up";
-    else subEl.textContent = `Ends ${formatEndTime(new Date(Date.now() + remainingSec() * 1000))}`;
+    if (mode === "alarm") setSub(state === "idle" ? "Set an alarm" : `until ${formatEndTime(alarmDate())}`);
+    else if (mode === "stopwatch") setSub(laps.length ? `${laps.length} lap${laps.length === 1 ? "" : "s"}` : "Counting up");
+    else setSub(`Ends ${formatEndTime(timerTargetMs())}`);
   }
 
   for (const btn of document.querySelectorAll(".modes button")) {
@@ -511,18 +532,34 @@ function syncAlarmWheel(smooth) {
   setWheel(wheel, { h: h12, m: minute, p: pm ? "PM" : "AM" }, smooth);
 }
 
-function onTimerWheel(values) {
-  let h = Number(values.h);
-  let m = Number(values.m);
-  let s = Number(values.s);
+function durationFromWheel(values) {
+  let h = Number(values.h) || 0;
+  let m = Number(values.m) || 0;
+  let s = Number(values.s) || 0;
   if (h >= 12) {
     m = 0;
     s = 0;
   }
-  const seconds = clampDuration(h * 3600 + m * 60 + s);
+  return clampDuration(h * 3600 + m * 60 + s);
+}
+
+function onTimerPreview(values) {
+  const seconds = durationFromWheel(values);
   if (!seconds) return;
-  if (h >= 12) setWheel($("wheel"), { m: 0, s: 0 }, true);
-  if (seconds === timerSeconds) return;
+  previewTimerSeconds = seconds;
+  if (mode === "timer" && state === "idle") setSub(`Ends ${formatEndTime(timerTargetMs())}`);
+}
+
+function onTimerWheel(values) {
+  const h = Number(values.h) || 0;
+  const seconds = durationFromWheel(values);
+  if (!seconds) return;
+  if (h >= 12) setWheel($("wheel"), { m: 0, s: 0 }, false);
+  previewTimerSeconds = seconds;
+  if (seconds === timerSeconds) {
+    setSub(`Ends ${formatEndTime(timerTargetMs())}`);
+    return;
+  }
   armed = seconds;
   timerSeconds = seconds;
   save();
@@ -1192,10 +1229,10 @@ function beginRunNow() {
   } else if (mode === "alarm") {
     armed = secondsUntilAlarm();
     runSpan = armed;
-    endAt = wallNow() + armed * 1000;
+    endAt = setupEndMs(wallNow(), armed);
   } else {
     runSpan = armed;
-    endAt = wallNow() + armed * 1000;
+    endAt = setupEndMs(wallNow(), armed);
   }
   state = "running";
   scheduleEnd();
@@ -1538,7 +1575,8 @@ function boot() {
   document.body.classList.toggle("is-coarse", window.matchMedia("(pointer: coarse)").matches || width < 720);
   buildHero();
   fillRain();
-  mountWheel($("wheel"), timerColumns(), onTimerWheel);
+  previewTimerSeconds = timerSeconds;
+  mountWheel($("wheel"), timerColumns(), onTimerWheel, onTimerPreview);
   mountWheel($("alarm-wheel"), alarmColumns(), onAlarmWheel);
   renderLaps();
   syncTimerWheel(false);
