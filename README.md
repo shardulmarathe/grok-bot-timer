@@ -12,9 +12,9 @@ Source: [github.com/shardulmarathe/grok-bot-timer](https://github.com/shardulmar
 
 ## Features
 
-- **Timer.** Presets, typed durations, and minute nudges. The hero fills from empty to full.
-- **Stopwatch.** Counts up, with laps.
-- **Alarm.** Rings at a clock time, including one set for the next day.
+- **Timer.** A scroll-wheel for hours, minutes, and seconds, plus presets. The hero fills with a vivid color chosen from the bot and the background.
+- **Stopwatch.** Counts up with a gentle bob, and keeps a lap list of splits and totals.
+- **Alarm.** An hour, minute, and AM/PM wheel. It rings at that time, including one set for the next day.
 - **Falling bots.** A light rain of flat sticker bots behind the digits.
 - **Hero fill and dance.** The center bot shows progress, then dances on Time's Up.
 - **Background-tab reliability.** Timing uses absolute timestamps, so a hidden tab, a locked phone, or a reload still finishes on time. The tab title, favicon, and an optional notification mark Time's Up.

@@ -8,6 +8,8 @@ import {
   formatEndTime,
 } from "./time.js";
 import { createBotElement, setEyes, setHeroLevel, PALETTE } from "./shapes.js";
+import { chooseFill, eyeInk, fillIsLight } from "./color.js";
+import { alarmColumns, mountWheel, setWheel, timerColumns } from "./wheel.js";
 
 const STORE_KEY = "grok-bot-timer";
 const RUN_KEY = "grok-bot-timer-run";
@@ -28,7 +30,6 @@ const $ = (id) => document.getElementById(id);
 const worldEl = $("world");
 const confettiEl = $("confetti");
 const clockEl = $("clock");
-const typedEl = $("typed");
 const subEl = $("sub");
 const heroEl = $("hero");
 const heroWrapEl = heroEl.parentElement;
@@ -63,8 +64,13 @@ let wind = 28;
 let nextSpawnAt = 700;
 let nextCatch = 8000;
 let pageHidden = false;
-let editing = false;
 let dockTimer = 0;
+let bobX = 0;
+let bobY = 0;
+let bobVX = 0;
+let bobVY = 0;
+let hop = 0;
+let hopV = 0;
 let frameDt = 16;
 let endAt = 0;
 let remainMs = 0;
@@ -217,6 +223,7 @@ function saveRun() {
         timerSeconds,
         alarmHHMM,
         notified,
+        laps,
       }),
     );
   } catch {
@@ -243,6 +250,7 @@ function restoreRun() {
   timerSeconds = run.timerSeconds || timerSeconds;
   alarmHHMM = run.alarmHHMM || alarmHHMM;
   notified = !!run.notified;
+  laps = Array.isArray(run.laps) ? run.laps.filter((lap) => lap && Number.isFinite(lap.total) && Number.isFinite(lap.split)) : [];
   if (state === "running") {
     scheduleEnd();
     lockWake();
@@ -291,13 +299,14 @@ function heroFill() {
   return theme === "dark" ? "#2E2E33" : "#0A0A0A";
 }
 
+function pageColor() {
+  if (!bgValue) return theme === "dark" ? "#000000" : "#ffffff";
+  if (bgValue.startsWith("linear")) return "#F4F0FF";
+  return bgValue;
+}
+
 function resolvedFill() {
-  const body = heroFill();
-  let fill = fillColor || ACCENT;
-  if (fill.toLowerCase() === body.toLowerCase()) {
-    fill = luminance(body) > 0.45 ? mixHex(body, "#0A0A0A", 0.45) : mixHex(body, "#FFFFFF", 0.55);
-  }
-  return fill;
+  return chooseFill(heroFill(), pageColor(), fillColor);
 }
 
 function bgLuminance(value) {
@@ -341,8 +350,11 @@ function applyAppearance() {
     }
   }
   if (hero?.eyes) {
+    const liquidY = Number(hero.liquid?.getAttribute("y") ?? 120);
+    const cover = Math.max(0, Math.min(1, (72 - liquidY) / 20));
+    const lightBody = luminance(body) > 0.55;
     let backdrop = hero.eyes.querySelector(".eye-back");
-    if (luminance(body) > 0.55) {
+    if (lightBody || (fillIsLight(fill) && cover > 0.02)) {
       if (!backdrop) {
         backdrop = document.createElementNS("http://www.w3.org/2000/svg", "ellipse");
         backdrop.setAttribute("class", "eye-back");
@@ -350,9 +362,10 @@ function applyAppearance() {
         backdrop.setAttribute("cy", "0");
         backdrop.setAttribute("rx", "24");
         backdrop.setAttribute("ry", "18");
-        backdrop.setAttribute("fill", "rgba(10,10,10,0.55)");
         hero.eyes.insertBefore(backdrop, hero.eyes.firstChild);
       }
+      backdrop.setAttribute("fill", eyeInk(fill));
+      backdrop.setAttribute("opacity", lightBody ? "1" : cover.toFixed(3));
     } else if (backdrop) {
       backdrop.remove();
     }
@@ -382,14 +395,24 @@ function renderDigits(text) {
 
 function renderLaps() {
   const list = $("laps");
+  const head = document.querySelector(".lap-head");
+  if (head) head.hidden = laps.length === 0;
+  const splits = laps.map((lap) => lap.split);
+  const fastest = laps.length >= 3 ? Math.min(...splits) : null;
+  const slowest = laps.length >= 3 ? Math.max(...splits) : null;
+  const distinct = fastest != null && fastest !== slowest;
   list.replaceChildren(
-    ...laps.map((sec, i) => {
+    ...laps.map((lap, i) => {
       const li = document.createElement("li");
-      const name = document.createElement("span");
-      const time = document.createElement("span");
-      name.textContent = `Lap ${laps.length - i}`;
-      time.textContent = formatClock(Math.floor(sec));
-      li.append(name, time);
+      const num = document.createElement("span");
+      const split = document.createElement("span");
+      const total = document.createElement("span");
+      num.textContent = String(laps.length - i).padStart(2, "0");
+      split.textContent = formatClock(Math.floor(lap.split));
+      total.textContent = formatClock(Math.floor(lap.total));
+      if (distinct && lap.split === fastest) li.classList.add("lap-fast");
+      else if (distinct && lap.split === slowest) li.classList.add("lap-slow");
+      li.append(num, split, total);
       return li;
     }),
   );
@@ -398,7 +421,7 @@ function renderLaps() {
 function renderChrome() {
   if (mode === "alarm" && state === "idle") armed = secondsUntilAlarm();
   const shown = displaySeconds(displayValue());
-  if (!editing) renderDigits(formatClock(shown));
+  renderDigits(formatClock(shown));
   const rem = mode === "stopwatch" ? displayValue() : remainingSec();
   clockEl.dataset.remaining = String(Math.round(rem * 1000) / 1000);
   document.body.dataset.state = state;
@@ -409,7 +432,7 @@ function renderChrome() {
   updateTitle();
 
   if (state !== "done") {
-    if (mode === "alarm") subEl.textContent = `until ${formatEndTime(alarmDate())}`;
+    if (mode === "alarm") subEl.textContent = state === "idle" ? "Set an alarm" : `until ${formatEndTime(alarmDate())}`;
     else if (mode === "stopwatch") subEl.textContent = laps.length ? `${laps.length} lap${laps.length === 1 ? "" : "s"}` : "Counting up";
     else subEl.textContent = `Ends ${formatEndTime(new Date(Date.now() + remainingSec() * 1000))}`;
   }
@@ -424,6 +447,7 @@ function renderChrome() {
   startBtn.textContent = label;
   focusPauseBtn.textContent = state === "paused" ? "Resume" : "Pause";
   const soundBtn = $("sound");
+  if (!soundBtn) return;
   soundBtn.setAttribute("aria-pressed", soundOn ? "true" : "false");
   soundBtn.setAttribute("aria-label", soundOn ? "Sound on" : "Sound off");
   themeBtn.setAttribute("aria-pressed", theme === "dark" ? "true" : "false");
@@ -443,7 +467,7 @@ function nudge(seconds) {
     const [h, m] = alarmHHMM.split(":").map(Number);
     const total = (h * 60 + m + Math.round(seconds / 60) + 24 * 60) % (24 * 60);
     alarmHHMM = `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
-    $("alarm-time").value = alarmHHMM;
+    syncAlarmWheel(true);
     save();
     updateUrl();
     renderChrome();
@@ -454,6 +478,7 @@ function nudge(seconds) {
     if (!next) return;
     armed = next;
     timerSeconds = next;
+    syncTimerWheel(true);
     save();
     updateUrl();
     renderChrome();
@@ -479,35 +504,56 @@ function nudge(seconds) {
   renderChrome();
 }
 
-function commitTyped(raw) {
-  const seconds = parseDuration(raw, { bare: "minutes" });
-  editing = false;
-  typedEl.hidden = true;
-  clockEl.hidden = false;
-  if (!seconds) {
-    showHint("Try 10, 10:00, or 1:30:00.");
-    renderChrome();
-    return;
-  }
-  showHint("");
-  if (state === "running" || state === "paused") nudge(seconds - remainingSec());
-  else {
-    armed = seconds;
-    timerSeconds = seconds;
-    save();
-    updateUrl();
-    renderChrome();
-  }
+function splitSeconds(total) {
+  const s = Math.max(0, Math.round(total));
+  return { h: Math.floor(s / 3600), m: Math.floor((s % 3600) / 60), s: s % 60 };
 }
 
-function openEditor() {
-  if (mode !== "timer" || state === "done") return;
-  editing = true;
-  typedEl.value = formatClock(displaySeconds(displayValue()));
-  typedEl.hidden = false;
-  clockEl.hidden = true;
-  typedEl.focus();
-  typedEl.select();
+function syncTimerWheel(smooth) {
+  const wheel = $("wheel");
+  if (!wheel) return;
+  const parts = splitSeconds(mode === "timer" ? timerSeconds : armed);
+  setWheel(wheel, parts, smooth);
+}
+
+function syncAlarmWheel(smooth) {
+  const wheel = $("alarm-wheel");
+  if (!wheel) return;
+  let [hour, minute] = alarmHHMM.split(":").map(Number);
+  const pm = hour >= 12;
+  let h12 = hour % 12;
+  if (h12 === 0) h12 = 12;
+  setWheel(wheel, { h: h12, m: minute, p: pm ? "PM" : "AM" }, smooth);
+}
+
+function onTimerWheel(values) {
+  let h = Number(values.h);
+  let m = Number(values.m);
+  let s = Number(values.s);
+  if (h >= 12) {
+    m = 0;
+    s = 0;
+  }
+  const seconds = clampDuration(h * 3600 + m * 60 + s);
+  if (!seconds) return;
+  if (h >= 12) setWheel($("wheel"), { m: 0, s: 0 }, true);
+  if (seconds === timerSeconds) return;
+  armed = seconds;
+  timerSeconds = seconds;
+  save();
+  updateUrl();
+  renderChrome();
+}
+
+function onAlarmWheel(values) {
+  let hour = Number(values.h) % 12;
+  if (values.p === "PM") hour += 12;
+  const next = `${String(hour).padStart(2, "0")}:${String(Number(values.m)).padStart(2, "0")}`;
+  if (!parseAlarm(next) || next === alarmHHMM) return;
+  alarmHHMM = next;
+  save();
+  updateUrl();
+  renderChrome();
 }
 
 function setMode(next) {
@@ -522,6 +568,8 @@ function setMode(next) {
   showHint("");
   updateUrl();
   save();
+  syncTimerWheel(false);
+  syncAlarmWheel(false);
   renderChrome();
 }
 
@@ -627,11 +675,7 @@ function stepHeroLook(targetX, targetY, dtMs) {
 }
 
 function paintHero() {
-  let level = timeProgress();
-  if (mode === "stopwatch" && state !== "idle") {
-    const breath = Math.sin((virtual / 1000) * Math.PI * 2 / 60);
-    level = 0.38 + breath * 0.08;
-  }
+  let level = mode === "stopwatch" ? 0 : timeProgress();
   if (state === "done") level = 1;
   setHeroLevel(hero, level);
   danceHero();
@@ -762,10 +806,41 @@ function digitShield(x, y, size = 24) {
   return factor;
 }
 
+function hopHero() {
+  hopV = prefersReduced() ? -26 : -70;
+}
+
+function stepBob() {
+  const dt = Math.min(0.032, Math.max(0.001, frameDt) / 1000);
+  const live = mode === "stopwatch" && state === "running" && !prefersReduced();
+  const t = motionClock / 1000;
+  const tx = live ? Math.sin(t * 1.15) * 5 : 0;
+  const ty = live ? Math.sin(t * 1.55) * 6 : 0;
+  bobVX += ((tx - bobX) * 12 - bobVX * 7) * dt;
+  bobVY += ((ty - bobY) * 12 - bobVY * 7) * dt;
+  bobX += bobVX * dt;
+  bobY += bobVY * dt;
+  hopV += (-hop * 46 - hopV * 8) * dt;
+  hop += hopV * dt;
+  const x = bobX;
+  const y = bobY + hop;
+  if (!live && Math.abs(x) < 0.25 && Math.abs(y) < 0.25 && Math.abs(bobVX) < 0.3 && Math.abs(hopV) < 0.3) {
+    heroEl.style.transform = "";
+    bobX = 0;
+    bobY = 0;
+    bobVX = 0;
+    bobVY = 0;
+    hop = 0;
+    hopV = 0;
+    return;
+  }
+  heroEl.style.transform = `translate(${x.toFixed(2)}px, ${y.toFixed(2)}px)`;
+}
+
 function danceHero() {
   if (!heroEl) return;
   if (state !== "done") {
-    heroEl.style.transform = "";
+    stepBob();
     return;
   }
   if (prefersReduced()) {
@@ -1028,11 +1103,12 @@ function reset() {
   remainMs = 0;
   watchAccum = 0;
   clearTimeout(endTimer);
-  editing = false;
-  typedEl.hidden = true;
-  clockEl.hidden = false;
   notified = false;
   if (mode === "timer") armed = timerSeconds;
+  if (mode === "stopwatch") {
+    laps = [];
+    renderLaps();
+  }
   clearMotion();
   fillRain();
   stopTitleFlash();
@@ -1040,6 +1116,8 @@ function reset() {
   unlockWake();
   saveRun();
   showHint("");
+  syncTimerWheel(false);
+  syncAlarmWheel(false);
   renderChrome();
 }
 
@@ -1053,7 +1131,7 @@ function plusFive() {
   if (mode === "alarm") {
     const d = new Date(Date.now() + 5 * 60 * 1000);
     alarmHHMM = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-    $("alarm-time").value = alarmHHMM;
+    syncAlarmWheel(false);
   } else {
     mode = "timer";
     timerSeconds = clampDuration((timerSeconds || armed || 0) + 300) || 300;
@@ -1217,7 +1295,7 @@ function renderSwatches() {
   );
   fillHost.replaceChildren(
     ...BOT_SWATCHES.map((color) =>
-      swatchButton(color, (fillColor || ACCENT).toLowerCase() === color.toLowerCase(), () => {
+      swatchButton(color, fillColor.toLowerCase() === color.toLowerCase(), () => {
         fillColor = color;
         save();
         renderChrome();
@@ -1292,11 +1370,15 @@ function boot() {
       }
     }
   }
-  $("alarm-time").value = alarmHHMM;
   applyTheme(theme);
   document.body.classList.toggle("is-coarse", window.matchMedia("(pointer: coarse)").matches || width < 720);
   buildHero();
   fillRain();
+  mountWheel($("wheel"), timerColumns(), onTimerWheel);
+  mountWheel($("alarm-wheel"), alarmColumns(), onAlarmWheel);
+  renderLaps();
+  syncTimerWheel(false);
+  syncAlarmWheel(false);
   save();
   updateUrl();
   renderChrome();
@@ -1382,11 +1464,17 @@ $("restart").addEventListener("click", restart);
 $("plus-five").addEventListener("click", plusFive);
 $("new-timer").addEventListener("click", reset);
 $("lap").addEventListener("click", () => {
-  if (mode !== "stopwatch" || state !== "running") return;
-  laps.unshift(virtual / 1000);
+  if (mode !== "stopwatch" || (state !== "running" && state !== "paused")) return;
+  syncFromWall();
+  const total = displayValue();
+  const prev = laps[0]?.total || 0;
+  laps.unshift({ total, split: Math.max(0, total - prev) });
   renderLaps();
+  hopHero();
+  saveRun();
   renderChrome();
 });
+$("watch-reset").addEventListener("click", reset);
 for (const btn of document.querySelectorAll(".modes button")) {
   btn.addEventListener("click", () => setMode(btn.dataset.mode));
 }
@@ -1397,35 +1485,13 @@ for (const btn of document.querySelectorAll("[data-preset]")) {
     else {
       armed = seconds;
       timerSeconds = seconds;
+      syncTimerWheel(true);
       save();
       updateUrl();
       renderChrome();
     }
   });
 }
-$("alarm-time").addEventListener("input", () => {
-  const next = parseAlarm($("alarm-time").value);
-  if (!next) return;
-  alarmHHMM = next;
-  save();
-  updateUrl();
-  renderChrome();
-});
-clockEl.addEventListener("click", openEditor);
-typedEl.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") {
-    e.preventDefault();
-    commitTyped(typedEl.value);
-  } else if (e.key === "Escape") {
-    editing = false;
-    typedEl.hidden = true;
-    clockEl.hidden = false;
-    renderChrome();
-  }
-});
-typedEl.addEventListener("blur", () => {
-  if (editing) commitTyped(typedEl.value);
-});
 clockEl.addEventListener("wheel", (e) => {
   if (mode === "stopwatch" || state === "done") return;
   e.preventDefault();
@@ -1446,7 +1512,8 @@ window.addEventListener("keydown", (e) => {
     restart();
     return;
   }
-  if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !typing) {
+  const onWheel = e.target.closest?.(".wheel-col");
+  if (!onWheel && (e.key === "ArrowUp" || e.key === "ArrowDown") && !typing) {
     e.preventDefault();
     const dir = e.key === "ArrowUp" ? 1 : -1;
     nudge(dir * (e.shiftKey ? 1 : 60));

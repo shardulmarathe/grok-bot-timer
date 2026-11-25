@@ -92,19 +92,24 @@ try {
   if ((await clock(page)) !== "1:30:00") throw new Error(`?t=1h30m showed ${await clock(page)}`);
 
   await page.goto(`${BASE}/?t=10m`, { waitUntil: "networkidle0" });
-  await page.click("#clock");
-  await page.$eval("#typed", (el) => {
-    el.value = "1:30:00";
+  await page.waitForSelector("#wheel .wheel-item");
+  await page.evaluate(() => {
+    const row = 44;
+    const cols = document.querySelectorAll("#wheel .wheel-col");
+    cols[0].scrollTop = 1 * row;
+    cols[1].scrollTop = 30 * row;
+    cols[2].scrollTop = 0;
+    for (const col of cols) col.dispatchEvent(new Event("scroll"));
   });
-  await page.focus("#typed");
-  await page.keyboard.press("Enter");
   await page.waitForFunction(() => document.querySelector("#clock")?.textContent.trim() === "1:30:00");
-  await page.click("#clock");
-  await page.$eval("#typed", (el) => {
-    el.value = "10";
+  await page.evaluate(() => {
+    const row = 44;
+    const cols = document.querySelectorAll("#wheel .wheel-col");
+    cols[0].scrollTop = 0;
+    cols[1].scrollTop = 10 * row;
+    cols[2].scrollTop = 0;
+    for (const col of cols) col.dispatchEvent(new Event("scroll"));
   });
-  await page.focus("#typed");
-  await page.keyboard.press("Enter");
   await page.waitForFunction(() => document.querySelector("#clock")?.textContent.trim() === "10:00");
 
   const realErrors = errors.filter(

@@ -82,10 +82,11 @@
           <div class="hero-wrap">
             <div class="hero" id="hero"></div>
           </div>
-          <p class="digits" id="clock" data-remaining="600" data-face="10:00" tabindex="0">
+          <div id="wheel" class="wheel" role="group" aria-label="Duration"></div>
+          <div id="alarm-wheel" class="wheel" role="group" aria-label="Alarm time"></div>
+          <p class="digits" id="clock" data-remaining="600" data-face="10:00">
             <span class="slot">1</span><span class="slot">0</span><span class="colon">:</span><span class="slot">0</span><span class="slot">0</span>
           </p>
-          <input id="typed" class="digits-edit" hidden aria-label="Type a duration" autocomplete="off" spellcheck="false" />
           <p class="sub" id="sub">Ends —</p>
           <div id="end-screen" class="finale" hidden>
             <h1 class="end-title" id="end-title">Time's Up</h1>
@@ -105,15 +106,16 @@
             <button type="button" class="pill" data-preset="1500">25m</button>
             <button type="button" class="pill" data-preset="3600">1h</button>
           </div>
-          <form id="alarm-form" class="alarm-only">
-            <input id="alarm-time" type="time" value="16:30" aria-label="Alarm time" />
-          </form>
           <p class="hint" id="hint" hidden></p>
           <div class="transport">
-            <button type="button" class="pill ghost watch-only" id="lap">Lap</button>
             <button type="button" class="pill primary" id="start">Start</button>
+            <button type="button" class="pill" id="lap">Lap</button>
+            <button type="button" class="pill" id="watch-reset">Reset</button>
           </div>
-          <ol id="laps" class="watch-only"></ol>
+          <div id="lap-wrap" class="watch-only">
+            <div class="lap-head" hidden><span>#</span><span>Split</span><span>Total</span></div>
+            <ol id="laps"></ol>
+          </div>
         </div>
       </section>
     </main>
