@@ -65,6 +65,7 @@ let nextCatch = 8000;
 let pageHidden = false;
 let editing = false;
 let dockTimer = 0;
+let frameDt = 16;
 let endAt = 0;
 let remainMs = 0;
 let watchOrigin = 0;
@@ -596,8 +597,33 @@ function buildHero() {
   hero.nextBlink = 1200;
   hero.blinkStart = 0;
   hero.dash = false;
+  hero.lookX = 0;
+  hero.lookY = 0;
+  hero.lookVX = 0;
+  hero.lookVY = 0;
   heroEl.appendChild(hero.svg);
   setHeroLevel(hero, 0);
+}
+
+function stepHeroLook(targetX, targetY, dtMs) {
+  const reduced = prefersReduced();
+  const dt = Math.min(0.032, Math.max(0, dtMs) / 1000);
+  if (!dt) return;
+  const settle = reduced ? 0.55 : 0.2;
+  const stiff = reduced ? 40 : 160;
+  const damp = reduced ? 10 : 14;
+  const maxSpeed = 2 / settle;
+  let vx = hero.lookVX + (targetX - hero.lookX) * stiff * dt - hero.lookVX * damp * dt;
+  let vy = hero.lookVY + (targetY - hero.lookY) * stiff * dt - hero.lookVY * damp * dt;
+  const speed = Math.hypot(vx, vy);
+  if (speed > maxSpeed) {
+    vx = (vx / speed) * maxSpeed;
+    vy = (vy / speed) * maxSpeed;
+  }
+  hero.lookX += vx * dt;
+  hero.lookY += vy * dt;
+  hero.lookVX = vx;
+  hero.lookVY = vy;
 }
 
 function paintHero() {
@@ -634,11 +660,21 @@ function paintHero() {
   let blink = blinkT < 0 || blinkT > 1 ? 1 : blinkT < 0.45 ? 1 - (blinkT / 0.45) * 0.92 : 0.08 + ((blinkT - 0.45) / 0.55) * 0.92;
   if (state === "done" && !prefersReduced()) {
     const beat = Math.sin((motionClock % 5200) / 5200 * Math.PI * 8);
-    if (beat > 0.86) blink = 0.22;
+    const squint = Math.max(0, Math.min(1, (beat - 0.55) / 0.45));
+    blink = Math.min(blink, 1 - squint * 0.78);
   }
+  const gazeX = Math.max(-1, Math.min(1, dx / m));
+  const gazeY = Math.max(-1, Math.min(1, dy / m));
+  if (hero.lookX == null) {
+    hero.lookX = 0;
+    hero.lookY = 0;
+    hero.lookVX = 0;
+    hero.lookVY = 0;
+  }
+  stepHeroLook(gazeX, gazeY, frameDt);
   setEyes(hero, {
-    gazeX: Math.max(-1, Math.min(1, dx / m)),
-    gazeY: Math.max(-1, Math.min(1, dy / m)),
+    gazeX: hero.lookX,
+    gazeY: hero.lookY,
     blink,
     eye: "#FFFFFF",
     fill: heroFill(),
@@ -1269,6 +1305,7 @@ function boot() {
 
 function loop(ts) {
   const dt = lastTs ? Math.min(48, ts - lastTs) : 16;
+  frameDt = dt;
   lastTs = ts;
   syncFromWall();
   if (!pageHidden) motionClock += dt;
