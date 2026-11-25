@@ -420,9 +420,6 @@ function renderChrome() {
   for (const btn of document.querySelectorAll(".modes button")) {
     btn.setAttribute("aria-selected", btn.dataset.mode === mode ? "true" : "false");
   }
-  for (const btn of document.querySelectorAll("[data-preset]")) {
-    btn.setAttribute("aria-pressed", btn.dataset.preset === String(timerSeconds) && state === "idle" ? "true" : "false");
-  }
   const label = state === "running" ? "Pause" : state === "paused" ? "Resume" : "Start";
   startBtn.textContent = label;
   focusPauseBtn.textContent = state === "paused" ? "Resume" : "Pause";
@@ -1531,20 +1528,6 @@ $("lap").addEventListener("click", () => {
 $("watch-reset").addEventListener("click", reset);
 for (const btn of document.querySelectorAll(".modes button")) {
   btn.addEventListener("click", () => setMode(btn.dataset.mode));
-}
-for (const btn of document.querySelectorAll("[data-preset]")) {
-  btn.addEventListener("click", () => {
-    const seconds = Number(btn.dataset.preset);
-    if (state === "running" || state === "paused") nudge(seconds - remainingSec());
-    else {
-      armed = seconds;
-      timerSeconds = seconds;
-      syncTimerWheel(true);
-      save();
-      updateUrl();
-      renderChrome();
-    }
-  });
 }
 clockEl.addEventListener("wheel", (e) => {
   if (mode === "stopwatch" || state === "done") return;

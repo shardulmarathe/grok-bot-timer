@@ -20,7 +20,7 @@ async function overflow(page) {
   return page.evaluate(() => {
     const viewH = window.innerHeight;
     const viewW = window.innerWidth;
-    const nodes = [...document.querySelectorAll(".wheel, .controls, .modes, .hero-wrap, #start, .presets")];
+    const nodes = [...document.querySelectorAll(".wheel, .controls, .modes, .hero-wrap, #start")];
     const boxes = nodes.filter((el) => getComputedStyle(el).display !== "none").map((el) => {
       const r = el.getBoundingClientRect();
       return { id: el.id || el.className, top: Math.round(r.top), bottom: Math.round(r.bottom), right: Math.round(r.right) };

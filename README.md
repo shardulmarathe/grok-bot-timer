@@ -12,7 +12,7 @@ Source: [github.com/shardulmarathe/grok-bot-timer](https://github.com/shardulmar
 
 ## Features
 
-- **Timer.** A scroll-wheel for hours, minutes, and seconds, plus presets. The hero fills with a vivid color chosen from the bot and the background.
+- **Timer.** A scroll-wheel for hours, minutes, and seconds. The hero fills with a vivid color chosen from the bot and the background.
 - **Stopwatch.** Counts up with a gentle bob, and keeps a lap list of splits and totals.
 - **Alarm.** An hour, minute, and AM/PM wheel. It rings at that time, including one set for the next day.
 - **Falling bots.** A light rain of flat sticker bots behind the digits.

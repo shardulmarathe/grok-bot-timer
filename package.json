@@ -6,6 +6,7 @@
     "dev": "vite --host 0.0.0.0 --port 43123",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0 --port 43123",
+    "og": "node scripts/og.mjs",
     "test": "node --test tests/time.test.js"
   },
   "devDependencies": {
