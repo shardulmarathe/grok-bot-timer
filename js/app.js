@@ -416,18 +416,22 @@ function paintHero() {
 }
 
 function rainCap() {
-  return state === "running" ? 9 : 3;
+  if (state === "done") return 22;
+  if (state === "running") return 15;
+  return 6;
 }
 
-function spawnDrift() {
+function spawnDrift({ y, festive = false } = {}) {
   if (prefersReduced() || pageHidden) return;
-  if (state !== "running" && state !== "idle") return;
+  if (state !== "running" && state !== "idle" && state !== "done") return;
   if (bots.filter((b) => b.state === "drift").length >= rainCap()) return;
   const spec = PALETTE[Math.floor(Math.random() * PALETTE.length)];
   const depth = Math.random();
-  const size = Math.round(16 + depth * 30);
-  const drag = 2.8;
-  const vt = 78 + depth * 110;
+  const size = Math.round(22 + depth * 34);
+  const drag = 3.2;
+  const travel = Math.max(480, height + size + 30);
+  const seconds = festive ? 2.6 + (1 - depth) * 2.2 : 6 + (1 - depth) * 8;
+  const vt = travel / seconds;
   const bot = createBotElement({ kind: spec.kind, fill: spec.fill, dash: !!spec.dash, eye: "#FFFFFF" });
   bot.svg.classList.add("bot");
   worldEl.appendChild(bot.svg);
@@ -436,38 +440,44 @@ function spawnDrift() {
     state: "drift",
     depth,
     size,
-    x: 36 + Math.random() * Math.max(40, width - 72),
-    y: -size - 8 - Math.random() * 40,
-    vx: wind * (0.35 + depth * 0.45) * (0.7 + Math.random() * 0.5),
-    vy: 8 + depth * 16,
+    x: 24 + Math.random() * Math.max(40, width - 48),
+    y: y ?? -size - 6 - Math.random() * 36,
+    vx: wind * (0.25 + depth * 0.35) * (0.65 + Math.random() * 0.5),
+    vy: vt * 0.35,
     drag,
     grav: vt * drag,
-    rot: (Math.random() - 0.5) * 12,
-    spinRate: (Math.random() - 0.5) * 16,
-    opacity: 0.24 + depth * 0.32,
+    rot: (Math.random() - 0.5) * 16,
+    spinRate: (Math.random() - 0.5) * 14,
+    opacity: 0.35 + depth * 0.4,
     dash: !!spec.dash,
-    nextBlink: motionClock + 800,
+    nextBlink: motionClock + 600,
     blinkStart: 0,
   });
-  bot.svg.style.zIndex = String(Math.round(depth * 4));
+  bot.svg.style.zIndex = String(Math.round(depth * 5));
   bot.svg.style.opacity = String(bot.opacity);
   bots.push(bot);
 }
 
+function fillRain() {
+  const target = rainCap();
+  const have = bots.filter((b) => b.state === "drift").length;
+  for (let i = have; i < target; i++) {
+    spawnDrift({
+      y: -10 + Math.random() * (height * 0.92),
+      festive: state === "done",
+    });
+  }
+}
+
 function digitShield(x, y) {
+  if (state === "done") return 1;
   const r = clockEl.getBoundingClientRect();
   if (!r.width) return 1;
-  const padX = 28;
-  const padY = 18;
-  const left = r.left - padX;
-  const right = r.right + padX;
-  const top = r.top - padY;
-  const bottom = r.bottom + padY;
-  const cx = Math.max(left, Math.min(x, right));
-  const cy = Math.max(top, Math.min(y, bottom));
-  const dist = Math.hypot(x - cx, y - cy);
-  if (dist >= 72) return 1;
-  return 0.12 + 0.88 * (dist / 72);
+  const dx = Math.max(r.left - x, 0, x - r.right);
+  const dy = Math.max(r.top - y, 0, y - r.bottom);
+  const dist = Math.hypot(dx, dy);
+  if (dist >= 18) return 1;
+  return 0.34 + 0.66 * (dist / 18);
 }
 
 function danceHero() {
@@ -519,13 +529,13 @@ function tickBots(dt) {
       bot.x += bot.vx * sec;
       bot.y += bot.vy * sec;
       bot.rot += (bot.spinRate || 0) * sec;
-      const fadeStart = height * 0.78;
-      const fadeEnd = height + bot.size;
-      let fade = 1;
-      if (bot.y > fadeStart) fade = 1 - Math.min(1, (bot.y - fadeStart) / (fadeEnd - fadeStart));
-      bot.svg.style.opacity = String(bot.opacity * fade * digitShield(bot.x, bot.y));
-      if (bot.y >= fadeEnd) bot.dead = true;
-      else if (state === "running" && tryCatch(bot)) continue;
+      const sway = Math.sin(motionClock / 680 + bot.id) * (7 + bot.depth * 12);
+      bot.sway = sway;
+      if (bot.y > height + bot.size) bot.dead = true;
+      else {
+        bot.svg.style.opacity = String(bot.opacity * digitShield(bot.x, bot.y));
+        if (state === "running" && tryCatch(bot)) continue;
+      }
     } else if (bot.state === "caught") {
       bot.caughtT += dt;
       const bounce = Math.sin(Math.min(1, bot.caughtT / 380) * Math.PI) * 14;
@@ -553,7 +563,8 @@ function tickBots(dt) {
     if (bot.state !== "caught") {
       bot.svg.style.width = `${bot.size}px`;
       bot.svg.style.height = `${bot.size}px`;
-      bot.svg.style.transform = `translate(${bot.x - bot.size / 2}px, ${bot.y - bot.size / 2}px) rotate(${bot.rot}deg)`;
+      const sway = bot.sway || 0;
+      bot.svg.style.transform = `translate(${bot.x + sway - bot.size / 2}px, ${bot.y - bot.size / 2}px) rotate(${bot.rot}deg)`;
     }
   }
   if (bots.some((b) => b.dead)) {
@@ -567,10 +578,14 @@ function tickBots(dt) {
 
 function tickSpawn() {
   if (prefersReduced() || pageHidden) return;
-  if (state !== "running" && state !== "idle") return;
+  if (state !== "running" && state !== "idle" && state !== "done") return;
   if (motionClock < nextSpawnAt) return;
-  spawnDrift();
-  const gap = state === "running" ? 1000 + Math.random() * 1000 : 2600 + Math.random() * 1600;
+  spawnDrift({ festive: state === "done" });
+  const gap = state === "done"
+    ? 220 + Math.random() * 180
+    : state === "running"
+      ? 400 + Math.random() * 400
+      : 700 + Math.random() * 500;
   nextSpawnAt = motionClock + gap;
 }
 
@@ -636,13 +651,15 @@ function finish() {
   bots = [];
   chime();
   burst();
+  fillRain();
+  nextSpawnAt = motionClock + 180;
   renderChrome();
 }
 
 function beginRun() {
   virtual = 0;
   wind = (Math.random() < 0.5 ? -1 : 1) * (18 + Math.random() * 24);
-  nextSpawnAt = motionClock + 280 + Math.random() * 500;
+  nextSpawnAt = motionClock + 350 + Math.random() * 250;
   nextCatch = motionClock + 9000;
   if (mode === "stopwatch") {
     endVirtual = Number.POSITIVE_INFINITY;
@@ -658,6 +675,7 @@ function beginRun() {
     runSpan = armed;
   }
   state = "running";
+  fillRain();
   if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
   renderChrome();
 }
@@ -689,6 +707,7 @@ function reset() {
   clockEl.hidden = false;
   if (mode === "timer") armed = timerSeconds;
   clearMotion();
+  fillRain();
   showHint("");
   renderChrome();
 }
@@ -749,6 +768,7 @@ function boot() {
   $("alarm-time").value = alarmHHMM;
   applyTheme(theme);
   buildHero();
+  fillRain();
   save();
   updateUrl();
   renderChrome();
@@ -767,9 +787,9 @@ function loop(ts) {
       tickBots(dt);
     }
     if (mode !== "stopwatch" && virtual >= endVirtual) finish();
-  } else if (!pageHidden) {
-    if (state === "idle") tickSpawn();
-    tickBots(state === "idle" ? dt : 0);
+  } else if (!pageHidden && (state === "idle" || state === "done")) {
+    tickSpawn();
+    tickBots(dt);
   }
   tickBurst(dt);
   paintHero();
