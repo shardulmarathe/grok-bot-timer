@@ -1,9 +1,10 @@
 import puppeteer from "puppeteer-core";
 import fs from "node:fs";
 import path from "node:path";
+import { chromePath, shotDir } from "./env.mjs";
 
 const BASE = process.env.TIMER_URL || "http://127.0.0.1:43123";
-const OUT = process.env.SHOT_DIR || "/opt/cursor/artifacts";
+const OUT = shotDir();
 fs.mkdirSync(OUT, { recursive: true });
 
 const errors = [];
@@ -30,7 +31,7 @@ async function stats(page) {
 }
 
 const browser = await puppeteer.launch({
-  executablePath: process.env.CHROME || "/opt/google/chrome/chrome",
+  executablePath: chromePath(),
   headless: "new",
   args: ["--no-sandbox", "--disable-dev-shm-usage", "--hide-scrollbars"],
 });

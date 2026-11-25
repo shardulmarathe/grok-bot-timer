@@ -1,9 +1,10 @@
 import { chromium } from "playwright";
 import fs from "node:fs";
 import path from "node:path";
+import { chromePath, shotDir } from "./env.mjs";
 
 const BASE = process.env.TIMER_URL || "http://127.0.0.1:43123";
-const OUT = process.env.SHOT_DIR || "/opt/cursor/artifacts";
+const OUT = shotDir();
 fs.mkdirSync(OUT, { recursive: true });
 
 function track(page, errors) {
@@ -49,7 +50,7 @@ async function sample(page, ms) {
 const errors = [];
 const notes = [];
 const browser = await chromium.launch({
-  executablePath: process.env.CHROME || "/opt/google/chrome/chrome",
+  executablePath: chromePath(),
   headless: true,
   args: ["--no-sandbox", "--disable-dev-shm-usage"],
 });
@@ -138,7 +139,7 @@ try {
 }
 
 const reduced = await chromium.launch({
-  executablePath: process.env.CHROME || "/opt/google/chrome/chrome",
+  executablePath: chromePath(),
   headless: true,
   args: ["--no-sandbox", "--disable-dev-shm-usage"],
 });

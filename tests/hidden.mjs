@@ -1,9 +1,10 @@
 import { chromium, webkit, devices } from "playwright";
 import fs from "node:fs";
 import path from "node:path";
+import { chromePath, shotDir } from "./env.mjs";
 
 const BASE = process.env.TIMER_URL || "http://127.0.0.1:43123";
-const OUT = process.env.SHOT_DIR || "/opt/cursor/artifacts";
+const OUT = shotDir();
 fs.mkdirSync(OUT, { recursive: true });
 
 const errors = [];
@@ -36,7 +37,7 @@ async function open(browser, options = {}) {
 }
 
 const chrome = await chromium.launch({
-  executablePath: process.env.CHROME || "/opt/google/chrome/chrome",
+  executablePath: chromePath(),
   headless: true,
   args: ["--no-sandbox", "--disable-dev-shm-usage"],
 });
@@ -111,7 +112,7 @@ try {
 }
 
 const jump = await chromium.launch({
-  executablePath: process.env.CHROME || "/opt/google/chrome/chrome",
+  executablePath: chromePath(),
   headless: true,
   args: ["--no-sandbox", "--disable-dev-shm-usage"],
 });
