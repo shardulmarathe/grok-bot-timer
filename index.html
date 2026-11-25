@@ -93,7 +93,7 @@
       </header>
 
       <section class="stage">
-        <div class="modes" role="tablist" aria-label="Mode">
+        <div class="modes" data-flip role="tablist" aria-label="Mode">
           <button type="button" id="mode-timer" data-mode="timer" role="tab" aria-selected="true">Timer</button>
           <button type="button" id="mode-stopwatch" data-mode="stopwatch" role="tab" aria-selected="false">Stopwatch</button>
           <button type="button" id="mode-alarm" data-mode="alarm" role="tab" aria-selected="false">Alarm</button>
@@ -101,17 +101,18 @@
 
         <div class="clock-stack" id="clock-cluster">
           <div class="hero-slot">
-            <div class="hero-wrap">
+            <div class="hero-wrap" data-flip>
               <div class="hero" id="hero"></div>
             </div>
           </div>
-          <div id="wheel" class="wheel" role="group" aria-label="Duration"></div>
-          <div id="alarm-wheel" class="wheel" role="group" aria-label="Alarm time"></div>
-          <p class="digits" id="clock" data-remaining="600" data-face="10:00">
-            <span class="slot">1</span><span class="slot">0</span><span class="colon">:</span><span class="slot">0</span><span class="slot">0</span>
-          </p>
-          <p class="sub" id="sub">Ends —</p>
-          <div id="end-screen" class="finale" hidden>
+          <div class="readout" data-flip>
+            <div id="wheel" class="wheel face" role="group" aria-label="Duration"></div>
+            <div id="alarm-wheel" class="wheel face" role="group" aria-label="Alarm time"></div>
+            <p class="digits face" id="clock" data-remaining="600" data-face="10:00">
+              <span class="slot">1</span><span class="slot">0</span><span class="colon">:</span><span class="slot">0</span><span class="slot">0</span>
+            </p>
+            <p class="sub" id="sub">Ends —</p>
+            <div id="end-screen" class="finale">
             <h1 class="end-title" id="end-title">Time's Up</h1>
             <div class="end-actions">
               <button type="button" class="pill primary" id="restart">Restart</button>
@@ -121,12 +122,12 @@
           </div>
         </div>
 
-        <div class="controls">
+        <div class="controls" data-flip>
           <p class="hint" id="hint" hidden></p>
           <div class="transport">
             <button type="button" class="pill primary" id="start">Start</button>
-            <button type="button" class="pill" id="lap">Lap</button>
-            <button type="button" class="pill" id="watch-reset">Reset</button>
+            <button type="button" class="pill" id="lap" data-flip>Lap</button>
+            <button type="button" class="pill" id="watch-reset" data-flip>Reset</button>
           </div>
           <div id="lap-wrap" class="watch-only">
             <div class="lap-head" hidden><span>#</span><span>Split</span><span>Total</span></div>

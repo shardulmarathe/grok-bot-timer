@@ -407,7 +407,6 @@ function renderChrome() {
   document.body.dataset.state = state;
   document.body.dataset.mode = mode;
   document.body.dataset.phase = phase();
-  endScreenEl.hidden = state !== "done";
   applyAppearance();
   updateTitle();
 
@@ -1062,6 +1061,10 @@ function clearMotion() {
 
 function finish() {
   if (state === "done" || mode === "stopwatch") return;
+  withMotion(() => finishNow());
+}
+
+function finishNow() {
   state = "done";
   clearTimeout(endTimer);
   virtual = runSpan * 1000;
@@ -1082,7 +1085,86 @@ function finish() {
   renderChrome();
 }
 
+function motionEase() {
+  return "cubic-bezier(.22,1,.36,1)";
+}
+
+function shownBox(el) {
+  const style = getComputedStyle(el);
+  const rect = el.getBoundingClientRect();
+  const shown = style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity) > 0.04 && rect.width > 2 && rect.height > 2;
+  return { rect, shown };
+}
+
+function playMotion(before) {
+  const reduced = prefersReduced();
+  const ease = motionEase();
+  const duration = reduced ? 140 : 540;
+  let enterDelay = 40;
+  if (reduced) {
+    document.querySelector(".stage")?.animate([{ opacity: 0.2 }, { opacity: 1 }], { duration: 140, easing: "linear", fill: "both" });
+  }
+  for (const item of before) {
+    const { el, rect, shown, clone } = item;
+    const next = shownBox(el);
+    if (shown && !next.shown) {
+      if (!clone || reduced) continue;
+      clone.querySelectorAll("[id]").forEach((node) => node.removeAttribute("id"));
+      clone.removeAttribute("id");
+      clone.style.position = "fixed";
+      clone.style.left = `${rect.left}px`;
+      clone.style.top = `${rect.top}px`;
+      clone.style.width = `${rect.width}px`;
+      clone.style.height = `${rect.height}px`;
+      clone.style.margin = "0";
+      clone.style.opacity = "1";
+      clone.style.visibility = "visible";
+      clone.style.pointerEvents = "none";
+      clone.style.zIndex = "7";
+      clone.style.transform = "none";
+      document.body.appendChild(clone);
+      clone.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 280, easing: ease }).onfinish = () => clone.remove();
+      continue;
+    }
+    if (!shown && next.shown) {
+      el.animate(
+        reduced
+          ? [{ opacity: 0 }, { opacity: 1 }]
+          : [{ opacity: 0, transform: "translateY(12px)" }, { opacity: 1, transform: "none" }],
+        { duration, delay: enterDelay, easing: ease, fill: "both" },
+      );
+      enterDelay += 50;
+      continue;
+    }
+    if (!shown || !next.shown || reduced) continue;
+    const dx = rect.left - next.rect.left;
+    const dy = rect.top - next.rect.top;
+    const sx = rect.width / next.rect.width;
+    if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5 && Math.abs(sx - 1) < 0.01) continue;
+    el.style.transformOrigin = "center center";
+    el.animate(
+      [{ transform: `translate(${dx}px, ${dy}px) scale(${sx})` }, { transform: "none" }],
+      { duration, easing: ease, fill: "both" },
+    ).onfinish = () => {
+      el.style.transformOrigin = "";
+    };
+  }
+}
+
+function withMotion(apply) {
+  const before = [...document.querySelectorAll("[data-flip]")].map((el) => {
+    const box = shownBox(el);
+    return { el, rect: box.rect, shown: box.shown, clone: box.shown ? el.cloneNode(true) : null };
+  });
+  apply();
+  playMotion(before);
+}
+
 function beginRun() {
+  withMotion(() => beginRunNow());
+}
+
+function beginRunNow() {
   virtual = 0;
   notified = false;
   stopTitleFlash();
@@ -1157,6 +1239,10 @@ function startOrPause() {
 }
 
 function reset() {
+  withMotion(() => resetNow());
+}
+
+function resetNow() {
   state = "idle";
   virtual = 0;
   endAt = 0;
