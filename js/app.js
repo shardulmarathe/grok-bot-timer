@@ -48,8 +48,9 @@ let width = window.innerWidth;
 let height = window.innerHeight;
 let nextId = 1;
 let wind = 28;
-let nextSpawnAt = Infinity;
+let nextSpawnAt = 700;
 let nextCatch = 8000;
+let pageHidden = false;
 let editing = false;
 let dockTimer = 0;
 
@@ -377,6 +378,7 @@ function paintHero() {
   }
   if (state === "done") level = 1;
   setHeroLevel(hero, level);
+  danceHero();
   const box = heroEl.getBoundingClientRect();
   const hx = box.left + box.width / 2;
   const hy = box.top + box.height / 2;
@@ -399,7 +401,11 @@ function paintHero() {
     hero.nextBlink = motionClock + 1600 + Math.random() * 1800;
   }
   const blinkT = hero.blinkStart ? (motionClock - hero.blinkStart) / 140 : -1;
-  const blink = blinkT < 0 || blinkT > 1 ? 1 : blinkT < 0.45 ? 1 - (blinkT / 0.45) * 0.92 : 0.08 + ((blinkT - 0.45) / 0.55) * 0.92;
+  let blink = blinkT < 0 || blinkT > 1 ? 1 : blinkT < 0.45 ? 1 - (blinkT / 0.45) * 0.92 : 0.08 + ((blinkT - 0.45) / 0.55) * 0.92;
+  if (state === "done" && !prefersReduced()) {
+    const beat = Math.sin((motionClock % 5200) / 5200 * Math.PI * 8);
+    if (beat > 0.86) blink = 0.22;
+  }
   setEyes(hero, {
     gazeX: Math.max(-1, Math.min(1, dx / m)),
     gazeY: Math.max(-1, Math.min(1, dy / m)),
@@ -409,35 +415,82 @@ function paintHero() {
   });
 }
 
+function rainCap() {
+  return state === "running" ? 9 : 3;
+}
+
 function spawnDrift() {
-  if (prefersReduced() || state !== "running") return;
-  if (bots.filter((b) => b.state === "drift").length >= 2) return;
+  if (prefersReduced() || pageHidden) return;
+  if (state !== "running" && state !== "idle") return;
+  if (bots.filter((b) => b.state === "drift").length >= rainCap()) return;
   const spec = PALETTE[Math.floor(Math.random() * PALETTE.length)];
   const depth = Math.random();
-  const size = 26 + Math.round(depth * 10);
-  const drag = 3.6;
-  const vt = 220 + depth * 140;
+  const size = Math.round(16 + depth * 30);
+  const drag = 2.8;
+  const vt = 78 + depth * 110;
   const bot = createBotElement({ kind: spec.kind, fill: spec.fill, dash: !!spec.dash, eye: "#FFFFFF" });
   bot.svg.classList.add("bot");
   worldEl.appendChild(bot.svg);
   Object.assign(bot, {
     id: nextId++,
     state: "drift",
+    depth,
     size,
-    x: 48 + Math.random() * (width - 96),
-    y: -size - 10,
-    vx: wind * (0.45 + Math.random() * 0.4),
-    vy: 12,
+    x: 36 + Math.random() * Math.max(40, width - 72),
+    y: -size - 8 - Math.random() * 40,
+    vx: wind * (0.35 + depth * 0.45) * (0.7 + Math.random() * 0.5),
+    vy: 8 + depth * 16,
     drag,
     grav: vt * drag,
-    rot: (Math.random() - 0.5) * 8,
-    opacity: 0.25 + Math.random() * 0.1,
+    rot: (Math.random() - 0.5) * 12,
+    spinRate: (Math.random() - 0.5) * 16,
+    opacity: 0.24 + depth * 0.32,
     dash: !!spec.dash,
     nextBlink: motionClock + 800,
     blinkStart: 0,
   });
+  bot.svg.style.zIndex = String(Math.round(depth * 4));
   bot.svg.style.opacity = String(bot.opacity);
   bots.push(bot);
+}
+
+function digitShield(x, y) {
+  const r = clockEl.getBoundingClientRect();
+  if (!r.width) return 1;
+  const padX = 28;
+  const padY = 18;
+  const left = r.left - padX;
+  const right = r.right + padX;
+  const top = r.top - padY;
+  const bottom = r.bottom + padY;
+  const cx = Math.max(left, Math.min(x, right));
+  const cy = Math.max(top, Math.min(y, bottom));
+  const dist = Math.hypot(x - cx, y - cy);
+  if (dist >= 72) return 1;
+  return 0.12 + 0.88 * (dist / 72);
+}
+
+function danceHero() {
+  if (!heroEl) return;
+  if (state !== "done") {
+    heroEl.style.transform = "";
+    return;
+  }
+  if (prefersReduced()) {
+    const sway = Math.sin(motionClock / 980) * 8;
+    heroEl.style.transform = `translateX(${sway.toFixed(2)}px)`;
+    return;
+  }
+  const t = (motionClock % 5200) / 5200;
+  const turn = t * Math.PI * 2;
+  const x = Math.sin(turn * 2) * 56;
+  const hop = Math.abs(Math.sin(turn * 2));
+  const y = -hop * 26 + Math.sin(turn * 4) * -4;
+  const squash = 1 + Math.cos(turn * 4) * 0.09;
+  const sx = (1 / squash) * (1 + Math.sin(turn * 2) * 0.035);
+  const sy = squash;
+  const rot = Math.sin(turn * 2) * 11 + Math.sin(turn) * 5;
+  heroEl.style.transform = `translate(${x.toFixed(2)}px, ${y.toFixed(2)}px) rotate(${rot.toFixed(2)}deg) scale(${sx.toFixed(3)}, ${sy.toFixed(3)})`;
 }
 
 function tryCatch(bot) {
@@ -465,14 +518,14 @@ function tickBots(dt) {
       bot.vy += (bot.grav - bot.drag * bot.vy) * sec;
       bot.x += bot.vx * sec;
       bot.y += bot.vy * sec;
-      const fadeStart = height * 0.5;
-      const fadeEnd = height * 0.66;
-      if (bot.y > fadeStart) {
-        const t = Math.min(1, (bot.y - fadeStart) / (fadeEnd - fadeStart));
-        bot.svg.style.opacity = String(bot.opacity * (1 - t));
-      }
+      bot.rot += (bot.spinRate || 0) * sec;
+      const fadeStart = height * 0.78;
+      const fadeEnd = height + bot.size;
+      let fade = 1;
+      if (bot.y > fadeStart) fade = 1 - Math.min(1, (bot.y - fadeStart) / (fadeEnd - fadeStart));
+      bot.svg.style.opacity = String(bot.opacity * fade * digitShield(bot.x, bot.y));
       if (bot.y >= fadeEnd) bot.dead = true;
-      else if (tryCatch(bot)) continue;
+      else if (state === "running" && tryCatch(bot)) continue;
     } else if (bot.state === "caught") {
       bot.caughtT += dt;
       const bounce = Math.sin(Math.min(1, bot.caughtT / 380) * Math.PI) * 14;
@@ -513,10 +566,12 @@ function tickBots(dt) {
 }
 
 function tickSpawn() {
-  if (state !== "running" || prefersReduced()) return;
+  if (prefersReduced() || pageHidden) return;
+  if (state !== "running" && state !== "idle") return;
   if (motionClock < nextSpawnAt) return;
   spawnDrift();
-  nextSpawnAt = motionClock + 6000 + Math.random() * 4000;
+  const gap = state === "running" ? 1000 + Math.random() * 1000 : 2600 + Math.random() * 1600;
+  nextSpawnAt = motionClock + gap;
 }
 
 function burst() {
@@ -587,7 +642,7 @@ function finish() {
 function beginRun() {
   virtual = 0;
   wind = (Math.random() < 0.5 ? -1 : 1) * (18 + Math.random() * 24);
-  nextSpawnAt = motionClock + 2000 + Math.random() * 2000;
+  nextSpawnAt = motionClock + 280 + Math.random() * 500;
   nextCatch = motionClock + 9000;
   if (mode === "stopwatch") {
     endVirtual = Number.POSITIVE_INFINITY;
@@ -703,15 +758,18 @@ function boot() {
 function loop(ts) {
   const dt = lastTs ? Math.min(48, ts - lastTs) : 16;
   lastTs = ts;
-  motionClock += dt;
+  if (!pageHidden) motionClock += dt;
   if (state === "running") {
     virtual += dt;
     if (mode !== "stopwatch" && virtual > endVirtual) virtual = endVirtual;
-    tickSpawn();
-    tickBots(dt);
+    if (!pageHidden) {
+      tickSpawn();
+      tickBots(dt);
+    }
     if (mode !== "stopwatch" && virtual >= endVirtual) finish();
-  } else {
-    tickBots(0);
+  } else if (!pageHidden) {
+    if (state === "idle") tickSpawn();
+    tickBots(state === "idle" ? dt : 0);
   }
   tickBurst(dt);
   paintHero();
@@ -821,6 +879,9 @@ window.addEventListener("pointerdown", revealDock);
 window.addEventListener("resize", () => {
   width = window.innerWidth;
   height = window.innerHeight;
+});
+document.addEventListener("visibilitychange", () => {
+  pageHidden = document.hidden;
 });
 
 boot();
