@@ -45,6 +45,11 @@ async function sample(page, ms) {
     let maxLift = 0;
     let maxSide = 0;
     let bad = "";
+    let flatMs = 0;
+    let flatRun = 0;
+    let lastTop = null;
+    let contacts = 0;
+    let wasAir = false;
     const shots = [];
     await new Promise((resolve) => {
       const frame = () => {
@@ -65,6 +70,23 @@ async function sample(page, ms) {
         if (restTop == null || box.top > restTop) restTop = box.top;
         const lift = restTop - box.top;
         if (lift > maxLift) maxLift = lift;
+        const motion = /translate\(([-\d.]+)px,\s*([-\d.]+)px/.exec(transform);
+        const py = motion ? Number(motion[2]) : 0;
+        const now = performance.now();
+        if (lastTop != null) {
+          const step = now - (frame.prev || now);
+          if (Math.abs(py) < 0.8 && Math.abs(py - lastTop) < 0.35) {
+            flatRun += step;
+            flatMs = Math.max(flatMs, flatRun);
+          } else flatRun = 0;
+          if (py < -8) wasAir = true;
+          if (wasAir && py >= -0.6) {
+            contacts += 1;
+            wasAir = false;
+          }
+        }
+        frame.prev = now;
+        lastTop = py;
         maxSide = Math.max(maxSide, Math.abs(box.left + box.width / 2 - innerWidth / 2));
         if (box.top < minTop) minTop = box.top;
         if (lift > 36 && shots.length < 6) shots.push(lift);
@@ -73,7 +95,14 @@ async function sample(page, ms) {
       };
       requestAnimationFrame(frame);
     });
-    return { bad, maxLift: Math.round(maxLift), maxSide: Math.round(maxSide), minTop: Math.round(minTop) };
+    return {
+      bad,
+      maxLift: Math.round(maxLift),
+      maxSide: Math.round(maxSide),
+      minTop: Math.round(minTop),
+      flat: Math.round(flatMs),
+      contacts,
+    };
   }, ms);
 }
 
@@ -97,9 +126,11 @@ try {
   const desk = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   track(desk, errors);
   await prep(desk);
-  const deskSample = await sample(desk, 2200);
+  const deskSample = await sample(desk, 15000);
   if (deskSample.bad) throw new Error(`desktop ${deskSample.bad}`);
   if (deskSample.maxLift < 48) throw new Error(`desktop hop too small ${deskSample.maxLift}`);
+  if (deskSample.flat > 150) throw new Error(`desktop stalled ${deskSample.flat}ms`);
+  if (deskSample.contacts < 10) throw new Error(`desktop too few bounces ${deskSample.contacts}`);
   await grabJump(desk, path.join(OUT, "timesup-jump-1.png"));
   await desk.waitForTimeout(280);
   await grabJump(desk, path.join(OUT, "timesup-jump-2.png"));

@@ -8,7 +8,7 @@ import {
   formatEndTime,
 } from "./time.js";
 import { createBotElement, setEyes, setHeroLevel, PALETTE } from "./shapes.js";
-import { chooseFill, eyeInk, fillIsLight } from "./color.js";
+import { chooseFill, readableBody } from "./color.js";
 import { alarmColumns, mountWheel, setWheel, timerColumns } from "./wheel.js";
 
 const STORE_KEY = "grok-bot-timer";
@@ -295,7 +295,7 @@ function mixHex(from, to, t) {
 }
 
 function heroFill() {
-  if (botColor) return botColor;
+  if (botColor) return readableBody(botColor);
   return theme === "dark" ? "#2E2E33" : "#0A0A0A";
 }
 
@@ -349,27 +349,7 @@ function applyAppearance() {
       }
     }
   }
-  if (hero?.eyes) {
-    const liquidY = Number(hero.liquid?.getAttribute("y") ?? 120);
-    const cover = Math.max(0, Math.min(1, (72 - liquidY) / 20));
-    const lightBody = luminance(body) > 0.55;
-    let backdrop = hero.eyes.querySelector(".eye-back");
-    if (lightBody || (fillIsLight(fill) && cover > 0.02)) {
-      if (!backdrop) {
-        backdrop = document.createElementNS("http://www.w3.org/2000/svg", "ellipse");
-        backdrop.setAttribute("class", "eye-back");
-        backdrop.setAttribute("cx", "0");
-        backdrop.setAttribute("cy", "0");
-        backdrop.setAttribute("rx", "24");
-        backdrop.setAttribute("ry", "18");
-        hero.eyes.insertBefore(backdrop, hero.eyes.firstChild);
-      }
-      backdrop.setAttribute("fill", eyeInk(fill));
-      backdrop.setAttribute("opacity", lightBody ? "1" : cover.toFixed(3));
-    } else if (backdrop) {
-      backdrop.remove();
-    }
-  }
+  hero?.eyes?.querySelector(".eye-back")?.remove();
   if (hero?.liquid) hero.liquid.setAttribute("fill", fill);
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.content = bgValue && !bgValue.startsWith("linear") ? bgValue : theme === "dark" ? "#000000" : "#ffffff";
@@ -838,6 +818,7 @@ function stepBob() {
 }
 
 let jumpRoom = null;
+let jump = null;
 
 function measureJumpRoom() {
   const prev = heroEl.style.transform;
@@ -847,55 +828,90 @@ function measureJumpRoom() {
   const margin = 12;
   const up = Math.max(24, box.top - margin);
   const side = Math.max(10, Math.min(box.left - margin, window.innerWidth - box.right - margin));
+  const phone = window.innerWidth < 720;
   return {
-    up: Math.min(74, up),
-    side: Math.min(42, side),
+    up: Math.min(phone ? 52 : 74, up),
+    side: Math.min(phone ? 28 : 42, side),
   };
 }
 
-function jumpArc(u) {
-  const t = Math.max(0, Math.min(1, u));
-  if (t < 0.42) {
-    const p = t / 0.42;
-    return 1 - (1 - p) * (1 - p);
+function paintJump() {
+  heroEl.style.transformOrigin = "center center";
+  heroEl.style.transform = `translate(${jump.x.toFixed(2)}px, ${jump.y.toFixed(2)}px) rotate(${jump.rot.toFixed(2)}deg)`;
+}
+
+function settleJump() {
+  const dt = Math.min(0.032, Math.max(0.001, frameDt) / 1000);
+  jump.vx += (-jump.x * 16 - jump.vx * 7) * dt;
+  jump.vy += (-jump.y * 16 - jump.vy * 7) * dt;
+  jump.x += jump.vx * dt;
+  jump.y += jump.vy * dt;
+  jump.rot += (0 - jump.rot) * Math.min(1, 6 * dt);
+  if (Math.hypot(jump.x, jump.y) < 0.35 && Math.abs(jump.vx) < 8 && Math.abs(jump.vy) < 8 && Math.abs(jump.rot) < 0.4) {
+    jump = null;
+    heroEl.style.transform = "";
+    heroEl.style.transformOrigin = "";
+    return;
   }
-  const p = (t - 0.42) / 0.58;
-  const s = p * p * (3 - 2 * p);
-  return 1 - s;
+  paintJump();
+}
+
+function stepJump() {
+  if (!jumpRoom) jumpRoom = measureJumpRoom();
+  const dt = Math.min(0.032, Math.max(0.001, frameDt) / 1000);
+  const reduced = prefersReduced();
+  const height = jumpRoom.up * (reduced ? 0.34 : 1);
+  const gravity = 540;
+  const needed = Math.sqrt(2 * gravity * Math.max(8, height));
+  if (!jump) {
+    jump = {
+      x: 0,
+      y: 0,
+      vx: 34,
+      vy: -needed,
+      rot: 0,
+    };
+  }
+  jump.vy += gravity * dt;
+  jump.y += jump.vy * dt;
+  jump.x += jump.vx * dt;
+  jump.rot += jump.vx * 0.18 * dt;
+  const wall = jumpRoom.side;
+  if (Math.abs(jump.x) > wall * 0.7) {
+    const edge = Math.sign(jump.x) * wall * 0.7;
+    jump.vx += -(jump.x - edge) * 10 * dt;
+  }
+  if (jump.x > wall) {
+    jump.x = wall;
+    jump.vx = -Math.abs(jump.vx) * 0.82;
+  } else if (jump.x < -wall) {
+    jump.x = -wall;
+    jump.vx = Math.abs(jump.vx) * 0.82;
+  }
+  if (Math.abs(jump.vx) < 20) jump.vx += Math.sign(jump.vx || 1) * 36 * dt;
+  if (jump.y >= 0 && jump.vy > 0) {
+    jump.y = 0;
+    let next = Math.abs(jump.vy) * 0.8;
+    if (next < needed) next = needed;
+    if (next > needed) next = needed;
+    jump.vy = -next;
+  }
+  paintJump();
 }
 
 function danceHero() {
   if (!heroEl) return;
   if (state !== "done") {
     jumpRoom = null;
+    if (jump) {
+      settleJump();
+      return;
+    }
     heroEl.style.transformOrigin = "";
     stepBob();
     return;
   }
-  if (!jumpRoom) jumpRoom = measureJumpRoom();
-  const reduced = prefersReduced();
-  const cycle = reduced ? 2200 : 1680;
-  const u = (motionClock % cycle) / cycle;
-  let air = 0;
-  let dir = 1;
-  let gain = 0;
-  if (u < 0.46) {
-    air = u / 0.46;
-    dir = 1;
-    gain = 1;
-  } else if (u >= 0.54 && u < 0.88) {
-    air = (u - 0.54) / 0.34;
-    dir = -1;
-    gain = 0.62;
-  }
-  const lift = air ? jumpArc(air) * gain : 0;
-  const travel = air ? Math.sin(air * Math.PI) * gain : 0;
-  const quiet = reduced ? 0.34 : 1;
-  const x = travel * dir * jumpRoom.side * quiet;
-  const y = -lift * jumpRoom.up * quiet;
-  const rot = travel * dir * (reduced ? 3 : 7.5);
-  heroEl.style.transformOrigin = "center center";
-  heroEl.style.transform = `translate(${x.toFixed(2)}px, ${y.toFixed(2)}px) rotate(${rot.toFixed(2)}deg)`;
+  stepJump();
 }
 
 function tryCatch(bot) {

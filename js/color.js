@@ -116,12 +116,27 @@ function inGamutFill(hue, chroma, L) {
   return { hex, got: hexToOklch(hex) };
 }
 
+export function contrastOnWhite(hex) {
+  const rgb = parseHex(hex) || [0, 0, 0];
+  const channel = (c) => {
+    const s = c / 255;
+    return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+  };
+  const y = 0.2126 * channel(rgb[0]) + 0.7152 * channel(rgb[1]) + 0.0722 * channel(rgb[2]);
+  return 1.05 / (y + 0.05);
+}
+
+function eyesOk(hex) {
+  return contrastOnWhite(hex) >= 3;
+}
+
 function searchFill(hue, chroma, bot, bg, preferL) {
-  const lights = [preferL, 0.42, 0.64, 0.36, 0.74, 0.5, 0.8, 0.32];
+  const lights = [preferL, 0.4, 0.34, 0.46, 0.3, 0.5, 0.26, 0.38];
   let best = null;
   for (const L of lights) {
     const { hex, got } = inGamutFill(hue, chroma, L);
-    if (got.C < 0.135) continue;
+    if (got.C < 0.12) continue;
+    if (!eyesOk(hex)) continue;
     if (!contrastOk(got, bot) || !contrastOk(got, bg)) continue;
     const score = got.C * 3 + Math.abs(got.L - bot.L) + Math.abs(got.L - bg.L) * 0.4;
     if (!best || score > best.score) best = { hex, score };
@@ -139,14 +154,14 @@ export function chooseFill(botHex, bgHex, customHex = "") {
   bot.hex = botHex;
   const bg = hexToOklch(bgHex || "#ffffff");
   const chroma = bot.C < 0.045 ? 0.19 : Math.min(0.22, Math.max(0.16, bot.C * 0.45 + 0.12));
-  const preferL = bot.L > 0.72 ? 0.46 : bot.L < 0.25 ? 0.64 : 0.7;
+  const preferL = 0.4;
   const hues = hueCandidates(bot, bg);
 
   if (customHex && parseHex(customHex)) {
     const custom = hexToOklch(customHex);
     const grey = custom.C < 0.06;
     const weak = !contrastOk(custom, bot) || !contrastOk(custom, bg);
-    if (!grey && !weak && custom.C >= 0.13) return normalizeHex(customHex);
+    if (!grey && !weak && custom.C >= 0.12 && eyesOk(customHex)) return normalizeHex(customHex);
     const keepHue = grey ? hues[0] : custom.H;
     const tuned = searchFill(keepHue, Math.max(0.17, grey ? chroma : custom.C), bot, bg, grey ? preferL : custom.L)
       || hues.map((hue) => searchFill(hue, chroma, bot, bg, preferL)).find(Boolean);
@@ -157,15 +172,16 @@ export function chooseFill(botHex, bgHex, customHex = "") {
     const found = searchFill(hue, chroma, bot, bg, preferL);
     if (found) return found;
   }
-  return searchFill(292, 0.19, bot, bg, bot.L > 0.5 ? 0.4 : 0.66) || "#7C4DFF";
+  return searchFill(292, 0.18, bot, bg, 0.38) || "#5B2FD6";
 }
 
-/** Dark, saturated disc so white eyes stay readable on a light fill or body. */
-export function eyeInk(fillHex) {
-  const fill = hexToOklch(fillHex);
-  return oklchToHex(0.3, Math.max(0.07, Math.min(0.12, fill.C)), fill.H || 292);
-}
-
-export function fillIsLight(fillHex) {
-  return hexToOklch(fillHex).L > 0.62;
+/** Deepen a custom bot color until white eyes clear roughly 3:1, keeping its hue. */
+export function readableBody(hex) {
+  if (eyesOk(hex)) return normalizeHex(hex);
+  const bot = hexToOklch(hex);
+  for (let L = Math.min(bot.L, 0.48); L >= 0.16; L -= 0.02) {
+    const next = oklchToHex(L, Math.max(bot.C, 0.1), bot.H || 292);
+    if (eyesOk(next) && hexToOklch(next).C >= 0.07) return next;
+  }
+  return oklchToHex(0.32, Math.max(0.1, Math.min(bot.C || 0.12, 0.2)), bot.H || 292);
 }

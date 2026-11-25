@@ -1,5 +1,5 @@
 import { chromium } from "playwright";
-import { chooseFill, hexToOklch } from "../js/color.js";
+import { chooseFill, contrastOnWhite, hexToOklch } from "../js/color.js";
 import { chromePath, shotDir } from "./env.mjs";
 import fs from "node:fs";
 import path from "node:path";
@@ -130,7 +130,10 @@ try {
     const png = await page.locator(".hero-wrap").screenshot();
     const got = await page.$eval("#hero .liquid", (el) => el.getAttribute("fill"));
     const sample = hexToOklch(got);
-    if (sample.C < 0.13) throw new Error(`muddy fill ${got} for ${bot} on ${bg}`);
+    const disc = await page.locator("#hero .eye-back").count();
+    if (disc) throw new Error(`eye disc still present for ${bot} on ${bg}`);
+    if (sample.C < 0.12) throw new Error(`muddy fill ${got} for ${bot} on ${bg}`);
+    if (contrastOnWhite(got) < 2.95) throw new Error(`fill ${got} contrast ${contrastOnWhite(got)} for ${bot}`);
     shots.push({ png: png.toString("base64"), label: `${theme} ${bot} on ${bg}`, fill: got });
   }
 
