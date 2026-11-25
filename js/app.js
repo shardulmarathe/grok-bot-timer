@@ -9,7 +9,7 @@ import {
 } from "./time.js";
 import { createBotElement, setEyes, setHeroLevel, PALETTE } from "./shapes.js";
 import { chooseFill, readableBody } from "./color.js";
-import { alarmColumns, mountWheel, setWheel, timerColumns } from "./wheel.js";
+import { alarmColumns, mountWheel, relayoutWheel, setWheel, timerColumns } from "./wheel.js";
 
 const STORE_KEY = "grok-bot-timer";
 const RUN_KEY = "grok-bot-timer-run";
@@ -432,6 +432,9 @@ function renderChrome() {
   const notifyBtn = $("notify");
   notifyBtn.setAttribute("aria-pressed", notifyOn ? "true" : "false");
   notifyBtn.setAttribute("aria-label", notifyOn ? "Notifications on" : "Notifications off");
+  const stock = !botColor && !fillColor && !bgValue;
+  $("preset-light")?.setAttribute("aria-pressed", stock && theme === "light" ? "true" : "false");
+  $("preset-dark")?.setAttribute("aria-pressed", stock && theme === "dark" ? "true" : "false");
   const air = bots.filter((b) => b.state === "drift" || b.state === "caught").length;
   worldEl.dataset.bots = String(bots.length);
   worldEl.dataset.landed = "0";
@@ -550,8 +553,13 @@ function setMode(next) {
   renderChrome();
 }
 
-function applyTheme(next) {
+function applyTheme(next, { resetColors = false } = {}) {
   theme = next === "dark" ? "dark" : "light";
+  if (resetColors) {
+    botColor = "";
+    fillColor = "";
+    bgValue = "";
+  }
   document.documentElement.dataset.theme = theme;
   save();
   renderChrome();
@@ -723,7 +731,8 @@ function spawnDrift({ y, festive = false } = {}) {
   if (bots.filter((b) => b.state === "drift").length >= rainCap()) return;
   const spec = PALETTE[Math.floor(Math.random() * PALETTE.length)];
   const depth = Math.random();
-  const size = phone() ? Math.round(16 + depth * 18) : Math.round(22 + depth * 34);
+  const scale = Math.max(0.7, Math.min(2.05, Math.min(width, height) / 780));
+  const size = Math.round((20 + depth * 32) * scale);
   const drag = 3.2;
   const travel = Math.max(480, height + size + 30);
   const seconds = festive ? 2.6 + (1 - depth) * 2.2 : 6 + (1 - depth) * 8;
@@ -823,12 +832,12 @@ function measureJumpRoom() {
   const box = heroEl.getBoundingClientRect();
   heroEl.style.transform = prev;
   const margin = 12;
-  const up = Math.max(24, box.top - margin);
-  const side = Math.max(10, Math.min(box.left - margin, window.innerWidth - box.right - margin));
-  const phone = window.innerWidth < 720;
+  const up = Math.max(16, box.top - margin);
+  const side = Math.max(8, Math.min(box.left - margin, window.innerWidth - box.right - margin));
+  const heroSize = box.height || 160;
   return {
-    up: Math.min(phone ? 52 : 74, up),
-    side: Math.min(phone ? 28 : 42, side),
+    up: Math.min(Math.max(16, heroSize * 0.34), up),
+    side: Math.min(Math.max(8, heroSize * 0.16), side),
   };
 }
 
@@ -1433,7 +1442,11 @@ function boot() {
   save();
   updateUrl();
   renderChrome();
-  requestAnimationFrame(loop);
+  requestAnimationFrame(() => {
+    relayoutWheel($("wheel"));
+    relayoutWheel($("alarm-wheel"));
+    requestAnimationFrame(loop);
+  });
 }
 
 function loop(ts) {
@@ -1457,7 +1470,7 @@ function loop(ts) {
   requestAnimationFrame(loop);
 }
 
-themeBtn.addEventListener("click", () => applyTheme(theme === "dark" ? "light" : "dark"));
+themeBtn.addEventListener("click", () => applyTheme(theme === "dark" ? "light" : "dark", { resetColors: true }));
 $("sound").addEventListener("click", () => {
   soundOn = !soundOn;
   unlockAudio();
@@ -1478,6 +1491,12 @@ $("color-close").addEventListener("click", () => {
 $("color-sheet").addEventListener("click", (e) => {
   if (e.target === $("color-sheet")) $("color-sheet").hidden = true;
 });
+function applyDefaultPreset(next) {
+  applyTheme(next, { resetColors: true });
+  renderSwatches();
+}
+$("preset-light").addEventListener("click", () => applyDefaultPreset("light"));
+$("preset-dark").addEventListener("click", () => applyDefaultPreset("dark"));
 $("color-reset").addEventListener("click", () => {
   botColor = "";
   fillColor = "";
@@ -1568,6 +1587,8 @@ window.addEventListener("resize", () => {
   width = window.innerWidth;
   height = window.innerHeight;
   jumpRoom = null;
+  relayoutWheel($("wheel"));
+  relayoutWheel($("alarm-wheel"));
   document.body.classList.toggle("is-coarse", window.matchMedia("(pointer: coarse)").matches || width < 720);
 });
 document.addEventListener("visibilitychange", onVisibleAgain);

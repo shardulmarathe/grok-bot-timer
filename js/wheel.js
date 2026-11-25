@@ -1,12 +1,18 @@
-const ROW = 44;
-
 function reducedMotion() {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
+function rowSize(node) {
+  const wheel = node?.closest?.(".wheel") || node;
+  const item = wheel?.querySelector?.(".wheel-item");
+  const height = item?.offsetHeight || 0;
+  return height > 8 ? height : 44;
+}
+
 function indexOf(col) {
   const max = col.querySelectorAll(".wheel-item").length - 1;
-  return Math.max(0, Math.min(max, Math.round(col.scrollTop / ROW)));
+  const row = rowSize(col);
+  return Math.max(0, Math.min(max, Math.round(col.scrollTop / row)));
 }
 
 function valueOf(col) {
@@ -17,7 +23,8 @@ function valueOf(col) {
 function paint(col) {
   const mid = col.scrollTop + col.clientHeight / 2;
   for (const item of col.querySelectorAll(".wheel-item")) {
-    const dist = Math.abs(item.offsetTop + ROW / 2 - mid) / ROW;
+    const row = rowSize(col);
+    const dist = Math.abs(item.offsetTop + row / 2 - mid) / row;
     const t = Math.min(dist, 3);
     item.style.transform = `scale(${(1 - t * 0.075).toFixed(3)})`;
     item.style.opacity = Math.max(0.28, 1 - t * 0.26).toFixed(3);
@@ -76,8 +83,11 @@ export function mountWheel(root, columns, onChange) {
 
 function commit(root) {
   if (root._writing > 0) return;
+  const cols = [...root.querySelectorAll(".wheel-col")];
+  if (!cols.some((col) => col.dataset.user === "1")) return;
   const values = readAll(root);
   const key = JSON.stringify(values);
+  for (const col of cols) delete col.dataset.user;
   if (key === root._last) return;
   root._last = key;
   root._onChange?.(values);
@@ -90,12 +100,21 @@ function bindColumn(root, col, onChange) {
 
   const schedule = () => {
     paint(col);
+    if (root._writing > 0) return;
+    if (col.dataset.user !== "1") {
+      const index = Number(col.dataset.index);
+      const row = rowSize(col);
+      if (Number.isFinite(index) && Math.abs(col.scrollTop - index * row) > 1) col.scrollTop = index * row;
+      return;
+    }
     clearTimeout(col._timer);
     col._timer = setTimeout(() => commit(root), 80);
   };
 
   col.addEventListener("scroll", schedule, { passive: true });
   col.addEventListener("scrollend", () => commit(root));
+  col.addEventListener("wheel", () => { col.dataset.user = "1"; }, { passive: true });
+  col.addEventListener("pointerdown", () => { col.dataset.user = "1"; });
 
   col.addEventListener("pointerdown", (e) => {
     if (e.pointerType !== "mouse" || e.button !== 0) return;
@@ -120,7 +139,7 @@ function bindColumn(root, col, onChange) {
     delete col.dataset.dragging;
     fling(col, velocity, () => {
       col.style.scrollSnapType = "";
-      const top = indexOf(col) * ROW;
+      const top = indexOf(col) * rowSize(col);
       col.scrollTo({ top, behavior: reducedMotion() ? "auto" : "smooth" });
       setTimeout(() => commit(root), reducedMotion() ? 20 : 240);
     });
@@ -182,7 +201,7 @@ function fling(col, velocity, done) {
 function scrollToIndex(root, col, index, smooth) {
   root._writing = (root._writing || 0) + 1;
   col.dataset.index = String(index);
-  col.scrollTo({ top: index * ROW, behavior: smooth && !reducedMotion() ? "smooth" : "auto" });
+  col.scrollTo({ top: index * rowSize(col), behavior: smooth && !reducedMotion() ? "smooth" : "auto" });
   paint(col);
   setTimeout(() => {
     root._writing = Math.max(0, root._writing - 1);
@@ -195,6 +214,16 @@ function scrollToValue(root, col, value, smooth) {
   const index = items.findIndex((item) => item.dataset.value === String(value));
   if (index < 0) return;
   scrollToIndex(root, col, index, smooth);
+}
+
+export function relayoutWheel(root) {
+  if (!root) return;
+  const row = rowSize(root);
+  for (const col of root.querySelectorAll(".wheel-col")) {
+    const index = Number(col.dataset.index);
+    if (Number.isFinite(index)) col.scrollTop = index * row;
+    paint(col);
+  }
 }
 
 export function setWheel(root, values, smooth = false) {
