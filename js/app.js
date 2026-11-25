@@ -1127,12 +1127,13 @@ function playMotion(before) {
       continue;
     }
     if (!shown && next.shown) {
-      el.animate(
+      const enter = el.animate(
         reduced
           ? [{ opacity: 0 }, { opacity: 1 }]
           : [{ opacity: 0, transform: "translateY(12px)" }, { opacity: 1, transform: "none" }],
         { duration, delay: enterDelay, easing: ease, fill: "both" },
       );
+      enter.onfinish = () => enter.cancel();
       enterDelay += 50;
       continue;
     }
@@ -1142,10 +1143,13 @@ function playMotion(before) {
     const sx = rect.width / next.rect.width;
     if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5 && Math.abs(sx - 1) < 0.01) continue;
     el.style.transformOrigin = "center center";
-    el.animate(
+    const motion = el.animate(
       [{ transform: `translate(${dx}px, ${dy}px) scale(${sx})` }, { transform: "none" }],
       { duration, easing: ease, fill: "both" },
-    ).onfinish = () => {
+    );
+    motion.onfinish = () => {
+      motion.cancel();
+      el.style.transform = "";
       el.style.transformOrigin = "";
     };
   }
