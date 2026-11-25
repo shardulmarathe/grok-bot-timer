@@ -10,7 +10,19 @@ import {
 import { createBotElement, setEyes, setHeroLevel, PALETTE } from "./shapes.js";
 
 const STORE_KEY = "grok-bot-timer";
+const RUN_KEY = "grok-bot-timer-run";
 const ACCENT = "#9B6BFF";
+const BOT_SWATCHES = ["#0A0A0A", "#9B6BFF", "#2F7BFF", "#14C4A8", "#FFB020", "#FF6A1F", "#EA4798", "#959595"];
+const BG_SWATCHES = [
+  { id: "white", value: "#ffffff" },
+  { id: "cream", value: "#F6F1E7" },
+  { id: "lavender", value: "#EDE7FF" },
+  { id: "mint", value: "#E5F7F2" },
+  { id: "sky", value: "#E7F2FF" },
+  { id: "ink", value: "#111114" },
+  { id: "navy", value: "#0E1A33" },
+  { id: "fade", value: "linear-gradient(180deg, #F4F0FF 0%, #E5F6F1 100%)" },
+];
 
 const $ = (id) => document.getElementById(id);
 const worldEl = $("world");
@@ -53,6 +65,19 @@ let nextCatch = 8000;
 let pageHidden = false;
 let editing = false;
 let dockTimer = 0;
+let endAt = 0;
+let remainMs = 0;
+let watchOrigin = 0;
+let watchAccum = 0;
+let endTimer = 0;
+let titleTimer = 0;
+let notified = false;
+let notifyAsked = false;
+let notifyOn = false;
+let wakeLock = null;
+let botColor = "";
+let fillColor = "";
+let bgValue = "";
 
 function prefersReduced() {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -70,7 +95,18 @@ function save() {
   try {
     localStorage.setItem(
       STORE_KEY,
-      JSON.stringify({ seconds: timerSeconds, theme, sound: soundOn, mode, alarm: alarmHHMM }),
+      JSON.stringify({
+        seconds: timerSeconds,
+        theme,
+        sound: soundOn,
+        mode,
+        alarm: alarmHHMM,
+        notifyOn,
+        notifyAsked,
+        botColor,
+        fillColor,
+        bgValue,
+      }),
     );
   } catch {
     /* private mode */
@@ -110,16 +146,111 @@ function secondsUntilAlarm() {
   return Math.max(1, Math.round((alarmDate().getTime() - Date.now()) / 1000));
 }
 
+function wallNow() {
+  return Date.now();
+}
+
 function remainingSec() {
   if (mode === "stopwatch") return Infinity;
   if (mode === "alarm" && state === "idle") return secondsUntilAlarm();
   if (state === "idle") return armed;
-  return Math.max(0, (endVirtual - virtual) / 1000);
+  if (state === "done") return 0;
+  if (state === "paused") return Math.max(0, remainMs / 1000);
+  if (endAt) return Math.max(0, (endAt - wallNow()) / 1000);
+  return armed;
 }
 
 function displayValue() {
-  if (mode === "stopwatch") return state === "idle" ? 0 : virtual / 1000;
+  if (mode === "stopwatch") {
+    if (state === "running") return (watchAccum + (wallNow() - watchOrigin)) / 1000;
+    if (state === "paused") return watchAccum / 1000;
+    return 0;
+  }
   return remainingSec();
+}
+
+function syncFromWall() {
+  if (mode === "stopwatch") {
+    if (state === "running") virtual = watchAccum + (wallNow() - watchOrigin);
+    else if (state === "paused") virtual = watchAccum;
+    return;
+  }
+  if (state === "paused") {
+    virtual = Math.max(0, runSpan * 1000 - remainMs);
+    return;
+  }
+  if (state !== "running" || !endAt) return;
+  const left = endAt - wallNow();
+  if (left <= 0) {
+    virtual = runSpan * 1000;
+    finish();
+    return;
+  }
+  virtual = Math.max(0, runSpan * 1000 - left);
+}
+
+function scheduleEnd() {
+  clearTimeout(endTimer);
+  if (mode === "stopwatch" || state !== "running" || !endAt) return;
+  const delay = Math.max(0, endAt - wallNow());
+  endTimer = setTimeout(() => syncFromWall(), delay);
+}
+
+function saveRun() {
+  try {
+    if (state === "idle") {
+      localStorage.removeItem(RUN_KEY);
+      return;
+    }
+    localStorage.setItem(
+      RUN_KEY,
+      JSON.stringify({
+        mode,
+        state,
+        endAt,
+        remainMs,
+        watchOrigin,
+        watchAccum,
+        runSpan,
+        armed,
+        timerSeconds,
+        alarmHHMM,
+        notified,
+      }),
+    );
+  } catch {
+    /* private mode */
+  }
+}
+
+function restoreRun() {
+  let run = null;
+  try {
+    run = JSON.parse(localStorage.getItem(RUN_KEY) || "null");
+  } catch {
+    return false;
+  }
+  if (!run || !run.state || run.state === "idle") return false;
+  mode = run.mode || mode;
+  state = run.state;
+  endAt = run.endAt || 0;
+  remainMs = run.remainMs || 0;
+  watchOrigin = run.watchOrigin || 0;
+  watchAccum = run.watchAccum || 0;
+  runSpan = run.runSpan || runSpan;
+  armed = run.armed || armed;
+  timerSeconds = run.timerSeconds || timerSeconds;
+  alarmHHMM = run.alarmHHMM || alarmHHMM;
+  notified = !!run.notified;
+  if (state === "running") {
+    scheduleEnd();
+    lockWake();
+  }
+  if (state === "done") {
+    startTitleFlash();
+    setFavicon(true);
+  }
+  return true;
 }
 
 function timeProgress() {
@@ -135,8 +266,99 @@ function phase() {
   return "ok";
 }
 
+function luminance(hex) {
+  const raw = String(hex || "").replace("#", "");
+  const full = raw.length === 3 ? raw.split("").map((c) => c + c).join("") : raw;
+  if (!/^[0-9a-fA-F]{6}$/.test(full)) return 0.9;
+  const n = parseInt(full, 16);
+  const ch = (v) => {
+    const s = v / 255;
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * ch((n >> 16) & 255) + 0.7152 * ch((n >> 8) & 255) + 0.0722 * ch(n & 255);
+}
+
+function mixHex(from, to, t) {
+  const parse = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  const a = parse(from.length === 7 ? from : "#000000");
+  const b = parse(to.length === 7 ? to : "#ffffff");
+  return `#${a.map((v, i) => Math.round(v + (b[i] - v) * t).toString(16).padStart(2, "0")).join("")}`;
+}
+
 function heroFill() {
+  if (botColor) return botColor;
   return theme === "dark" ? "#2E2E33" : "#0A0A0A";
+}
+
+function resolvedFill() {
+  const body = heroFill();
+  let fill = fillColor || ACCENT;
+  if (fill.toLowerCase() === body.toLowerCase()) {
+    fill = luminance(body) > 0.45 ? mixHex(body, "#0A0A0A", 0.45) : mixHex(body, "#FFFFFF", 0.55);
+  }
+  return fill;
+}
+
+function bgLuminance(value) {
+  if (!value) return theme === "dark" ? 0 : 1;
+  if (value.startsWith("linear")) return 0.9;
+  return luminance(value);
+}
+
+function applyAppearance() {
+  document.documentElement.dataset.theme = theme;
+  const body = heroFill();
+  const fill = resolvedFill();
+  document.documentElement.style.setProperty("--fill", fill);
+  if (bgValue) {
+    document.body.style.background = bgValue;
+    const light = bgLuminance(bgValue) > 0.55;
+    const ink = light ? "#0A0A0A" : "#FFFFFF";
+    document.documentElement.style.setProperty("--ink", ink);
+    document.documentElement.style.setProperty("--bg", light ? "#FFFFFF" : "#141418");
+    document.documentElement.style.setProperty("--muted", light ? "rgba(10,10,10,0.55)" : "rgba(255,255,255,0.72)");
+    document.documentElement.style.setProperty("--line", light ? "rgba(10,10,10,0.16)" : "rgba(255,255,255,0.28)");
+    document.documentElement.style.setProperty("--primary-bg", ink);
+    document.documentElement.style.setProperty("--primary-ink", light ? "#FFFFFF" : "#0A0A0A");
+    document.documentElement.style.setProperty("--digit", ink);
+  } else {
+    document.body.style.background = "";
+    for (const key of ["--ink", "--bg", "--muted", "--line", "--primary-bg", "--primary-ink", "--digit"]) {
+      document.documentElement.style.removeProperty(key);
+    }
+  }
+  if (hero?.body) {
+    const circle = hero.body.querySelector("circle");
+    if (circle) {
+      if (luminance(body) > 0.62) {
+        circle.setAttribute("stroke", "#0A0A0A");
+        circle.setAttribute("stroke-width", "2.5");
+      } else {
+        circle.removeAttribute("stroke");
+        circle.removeAttribute("stroke-width");
+      }
+    }
+  }
+  if (hero?.eyes) {
+    let backdrop = hero.eyes.querySelector(".eye-back");
+    if (luminance(body) > 0.55) {
+      if (!backdrop) {
+        backdrop = document.createElementNS("http://www.w3.org/2000/svg", "ellipse");
+        backdrop.setAttribute("class", "eye-back");
+        backdrop.setAttribute("cx", "0");
+        backdrop.setAttribute("cy", "0");
+        backdrop.setAttribute("rx", "24");
+        backdrop.setAttribute("ry", "18");
+        backdrop.setAttribute("fill", "rgba(10,10,10,0.55)");
+        hero.eyes.insertBefore(backdrop, hero.eyes.firstChild);
+      }
+    } else if (backdrop) {
+      backdrop.remove();
+    }
+  }
+  if (hero?.liquid) hero.liquid.setAttribute("fill", fill);
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.content = bgValue && !bgValue.startsWith("linear") ? bgValue : theme === "dark" ? "#000000" : "#ffffff";
 }
 
 function showHint(text) {
@@ -182,8 +404,8 @@ function renderChrome() {
   document.body.dataset.mode = mode;
   document.body.dataset.phase = phase();
   endScreenEl.hidden = state !== "done";
-  const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.content = theme === "dark" ? "#000000" : "#ffffff";
+  applyAppearance();
+  updateTitle();
 
   if (state !== "done") {
     if (mode === "alarm") subEl.textContent = `until ${formatEndTime(alarmDate())}`;
@@ -205,6 +427,9 @@ function renderChrome() {
   soundBtn.setAttribute("aria-label", soundOn ? "Sound on" : "Sound off");
   themeBtn.setAttribute("aria-pressed", theme === "dark" ? "true" : "false");
   themeBtn.setAttribute("aria-label", theme === "dark" ? "Light theme" : "Dark theme");
+  const notifyBtn = $("notify");
+  notifyBtn.setAttribute("aria-pressed", notifyOn ? "true" : "false");
+  notifyBtn.setAttribute("aria-label", notifyOn ? "Notifications on" : "Notifications off");
   const air = bots.filter((b) => b.state === "drift" || b.state === "caught").length;
   worldEl.dataset.bots = String(bots.length);
   worldEl.dataset.landed = "0";
@@ -233,17 +458,22 @@ function nudge(seconds) {
     renderChrome();
     return;
   }
-  const nextEnd = endVirtual + seconds * 1000;
-  if (nextEnd <= virtual + 40) {
-    endVirtual = virtual;
-    finish();
-    return;
+  if (state === "running") {
+    if (endAt + seconds * 1000 <= wallNow() + 40) {
+      endAt = wallNow();
+      finish();
+      return;
+    }
+    endAt += seconds * 1000;
+  } else if (state === "paused") {
+    remainMs = Math.max(1000, remainMs + seconds * 1000);
   }
-  endVirtual = nextEnd;
   runSpan = Math.max(1, runSpan + seconds);
   armed = Math.max(1, Math.round(runSpan));
   if (mode === "timer") timerSeconds = armed;
+  scheduleEnd();
   save();
+  saveRun();
   updateUrl();
   renderChrome();
 }
@@ -307,7 +537,7 @@ function tone(freq, dur, gain) {
   if (!AC) return;
   try {
     if (!audioCtx) audioCtx = new AC();
-    if (audioCtx.state === "suspended") audioCtx.resume();
+    if (audioCtx.state === "suspended") audioCtx.resume().catch(() => {});
     const now = audioCtx.currentTime;
     const o = audioCtx.createOscillator();
     const g = audioCtx.createGain();
@@ -335,7 +565,7 @@ function chime() {
   if (!AC) return;
   try {
     if (!audioCtx) audioCtx = new AC();
-    if (audioCtx.state === "suspended") audioCtx.resume();
+    if (audioCtx.state === "suspended") audioCtx.resume().catch(() => {});
     const now = audioCtx.currentTime;
     [523.25, 659.25, 783.99].forEach((freq, i) => {
       const o = audioCtx.createOscillator();
@@ -662,44 +892,86 @@ function clearMotion() {
 function finish() {
   if (state === "done" || mode === "stopwatch") return;
   state = "done";
-  virtual = endVirtual;
+  clearTimeout(endTimer);
+  virtual = runSpan * 1000;
   for (const b of bots) b.svg.remove();
   bots = [];
-  chime();
+  if (!notified) {
+    chime();
+    notifyDone();
+    notified = true;
+  }
+  startTitleFlash();
+  setFavicon(true);
   burst();
   fillRain();
   nextSpawnAt = motionClock + 180;
+  unlockWake();
+  saveRun();
   renderChrome();
 }
 
 function beginRun() {
   virtual = 0;
+  notified = false;
+  stopTitleFlash();
+  setFavicon(false);
   wind = (Math.random() < 0.5 ? -1 : 1) * (18 + Math.random() * 24);
   nextSpawnAt = motionClock + 350 + Math.random() * 250;
   nextCatch = motionClock + 9000;
   if (mode === "stopwatch") {
-    endVirtual = Number.POSITIVE_INFINITY;
+    watchAccum = 0;
+    watchOrigin = wallNow();
+    endAt = 0;
     runSpan = 0;
     laps = [];
     renderLaps();
   } else if (mode === "alarm") {
     armed = secondsUntilAlarm();
-    endVirtual = armed * 1000;
     runSpan = armed;
+    endAt = wallNow() + armed * 1000;
   } else {
-    endVirtual = armed * 1000;
     runSpan = armed;
+    endAt = wallNow() + armed * 1000;
   }
   state = "running";
+  scheduleEnd();
   fillRain();
-  if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
+  lockWake();
+  saveRun();
+  renderChrome();
+}
+
+function pauseRun() {
+  if (mode === "stopwatch") {
+    watchAccum += wallNow() - watchOrigin;
+    virtual = watchAccum;
+  } else {
+    remainMs = Math.max(0, endAt - wallNow());
+    endAt = 0;
+  }
+  state = "paused";
+  clearTimeout(endTimer);
+  unlockWake();
+  saveRun();
+  renderChrome();
+}
+
+function resumeRun() {
+  if (mode === "stopwatch") watchOrigin = wallNow();
+  else endAt = wallNow() + remainMs;
+  state = "running";
+  scheduleEnd();
+  lockWake();
+  saveRun();
   renderChrome();
 }
 
 function startOrPause() {
+  unlockAudio();
+  askNotify();
   if (state === "running") {
-    state = "paused";
-    renderChrome();
+    pauseRun();
     return;
   }
   if (state === "done") {
@@ -707,8 +979,7 @@ function startOrPause() {
     return;
   }
   if (state === "paused") {
-    state = "running";
-    renderChrome();
+    resumeRun();
     return;
   }
   beginRun();
@@ -717,13 +988,21 @@ function startOrPause() {
 function reset() {
   state = "idle";
   virtual = 0;
-  endVirtual = 0;
+  endAt = 0;
+  remainMs = 0;
+  watchAccum = 0;
+  clearTimeout(endTimer);
   editing = false;
   typedEl.hidden = true;
   clockEl.hidden = false;
+  notified = false;
   if (mode === "timer") armed = timerSeconds;
   clearMotion();
   fillRain();
+  stopTitleFlash();
+  setFavicon(false);
+  unlockWake();
+  saveRun();
   showHint("");
   renderChrome();
 }
@@ -761,6 +1040,167 @@ function revealDock() {
   }, 2000);
 }
 
+function unlockAudio() {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return;
+  try {
+    if (!audioCtx) audioCtx = new AC();
+    if (audioCtx.state === "suspended") audioCtx.resume().catch(() => {});
+  } catch {
+    /* ignore */
+  }
+}
+
+function setFavicon(alert) {
+  const link = document.querySelector("link[rel='icon']");
+  if (!link) return;
+  const base = import.meta.env.BASE_URL || "./";
+  link.href = `${base}${alert ? "favicon-alert.svg" : "favicon.svg"}`;
+}
+
+function updateTitle() {
+  if (state === "done") return;
+  if (state === "running" || pageHidden) {
+    const secs = mode === "stopwatch" ? displayValue() : remainingSec();
+    document.title = `${formatClock(displaySeconds(secs))} · Grok Bot Timer`;
+    return;
+  }
+  document.title = "Grok Bot Timer";
+}
+
+function stopTitleFlash() {
+  clearInterval(titleTimer);
+  titleTimer = 0;
+  if (state !== "done") document.title = "Grok Bot Timer";
+}
+
+function startTitleFlash() {
+  clearInterval(titleTimer);
+  let on = true;
+  document.title = "⏰ Time's Up";
+  titleTimer = setInterval(() => {
+    on = !on;
+    document.title = on ? "⏰ Time's Up" : "Grok Bot Timer";
+  }, 1000);
+}
+
+function notifyDone() {
+  if (!notifyOn || !("Notification" in window) || Notification.permission !== "granted") return;
+  try {
+    const base = import.meta.env.BASE_URL || "./";
+    new Notification("Time's Up", {
+      body: "Your Grok Bot timer finished.",
+      icon: new URL(`${base}apple-touch-icon.png`, location.href).href,
+    });
+  } catch {
+    /* notifications blocked */
+  }
+}
+
+async function askNotify() {
+  if (!("Notification" in window) || Notification.permission !== "default" || notifyAsked) return;
+  notifyAsked = true;
+  try {
+    const result = await Notification.requestPermission();
+    notifyOn = result === "granted";
+  } catch {
+    notifyOn = false;
+  }
+  save();
+  renderChrome();
+}
+
+async function toggleNotify() {
+  if (!("Notification" in window)) {
+    showHint("Notifications aren't available in this browser.");
+    return;
+  }
+  if (Notification.permission === "denied") {
+    notifyOn = false;
+    showHint("Notifications are blocked in the browser settings.");
+    renderChrome();
+    return;
+  }
+  if (Notification.permission === "default") {
+    notifyAsked = false;
+    await askNotify();
+    return;
+  }
+  notifyOn = !notifyOn;
+  save();
+  renderChrome();
+}
+
+async function lockWake() {
+  try {
+    if (!navigator.wakeLock || state !== "running" || pageHidden) return;
+    wakeLock = await navigator.wakeLock.request("screen");
+  } catch {
+    wakeLock = null;
+  }
+}
+
+function unlockWake() {
+  const lock = wakeLock;
+  wakeLock = null;
+  lock?.release?.().catch(() => {});
+}
+
+function onVisibleAgain() {
+  pageHidden = document.visibilityState === "hidden";
+  syncFromWall();
+  updateTitle();
+  if (pageHidden) unlockWake();
+  else if (state === "running") lockWake();
+}
+
+function swatchButton(color, pressed, onPick) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "swatch";
+  btn.style.background = color;
+  btn.setAttribute("aria-label", color);
+  btn.setAttribute("aria-pressed", pressed ? "true" : "false");
+  btn.addEventListener("click", onPick);
+  return btn;
+}
+
+function renderSwatches() {
+  const botHost = $("bot-swatches");
+  const fillHost = $("fill-swatches");
+  const bgHost = $("bg-swatches");
+  botHost.replaceChildren(
+    ...BOT_SWATCHES.map((color) =>
+      swatchButton(color, botColor.toLowerCase() === color.toLowerCase(), () => {
+        botColor = color;
+        save();
+        renderChrome();
+        renderSwatches();
+      }),
+    ),
+  );
+  fillHost.replaceChildren(
+    ...BOT_SWATCHES.map((color) =>
+      swatchButton(color, (fillColor || ACCENT).toLowerCase() === color.toLowerCase(), () => {
+        fillColor = color;
+        save();
+        renderChrome();
+        renderSwatches();
+      }),
+    ),
+  );
+  bgHost.replaceChildren(
+    ...BG_SWATCHES.map((item) =>
+      swatchButton(item.value, bgValue === item.value, () => {
+        bgValue = item.value;
+        save();
+        renderChrome();
+        renderSwatches();
+      }),
+    ),
+  );
+}
+
 function boot() {
   const stored = readStore();
   const params = new URLSearchParams(location.search);
@@ -768,6 +1208,11 @@ function boot() {
   const alarmParam = parseAlarm(params.get("alarm"));
   if (stored?.theme) theme = stored.theme === "dark" ? "dark" : "light";
   if (stored?.sound) soundOn = true;
+  if (stored?.notifyOn) notifyOn = true;
+  if (stored?.notifyAsked) notifyAsked = true;
+  if (stored?.botColor) botColor = String(stored.botColor);
+  if (stored?.fillColor) fillColor = String(stored.fillColor);
+  if (stored?.bgValue) bgValue = String(stored.bgValue);
   if (stored?.alarm) alarmHHMM = parseAlarm(stored.alarm) || alarmHHMM;
   if (stored?.mode === "stopwatch" || stored?.mode === "alarm" || stored?.mode === "timer") mode = stored.mode;
   let seconds = stored?.seconds || 600;
@@ -782,6 +1227,35 @@ function boot() {
   } else if (params.get("mode") === "stopwatch") mode = "stopwatch";
   else if (fromUrl) mode = "timer";
   armed = mode === "alarm" ? secondsUntilAlarm() : timerSeconds;
+  const intent = {
+    mode,
+    timerSeconds,
+    alarmHHMM,
+    explicit: Boolean(fromUrl || alarmParam || params.get("mode")),
+  };
+  const resumed = restoreRun();
+  if (resumed && intent.explicit) {
+    const same =
+      intent.mode === mode &&
+      (mode !== "timer" || intent.timerSeconds === timerSeconds) &&
+      (mode !== "alarm" || intent.alarmHHMM === alarmHHMM);
+    if (!same) {
+      state = "idle";
+      endAt = 0;
+      remainMs = 0;
+      watchAccum = 0;
+      notified = false;
+      mode = intent.mode;
+      timerSeconds = intent.timerSeconds;
+      alarmHHMM = intent.alarmHHMM;
+      armed = mode === "alarm" ? secondsUntilAlarm() : timerSeconds;
+      try {
+        localStorage.removeItem(RUN_KEY);
+      } catch {
+        /* private mode */
+      }
+    }
+  }
   $("alarm-time").value = alarmHHMM;
   applyTheme(theme);
   document.body.classList.toggle("is-coarse", window.matchMedia("(pointer: coarse)").matches || width < 720);
@@ -796,15 +1270,13 @@ function boot() {
 function loop(ts) {
   const dt = lastTs ? Math.min(48, ts - lastTs) : 16;
   lastTs = ts;
+  syncFromWall();
   if (!pageHidden) motionClock += dt;
   if (state === "running") {
-    virtual += dt;
-    if (mode !== "stopwatch" && virtual > endVirtual) virtual = endVirtual;
     if (!pageHidden) {
       tickSpawn();
       tickBots(dt);
     }
-    if (mode !== "stopwatch" && virtual >= endVirtual) finish();
   } else if (!pageHidden && (state === "idle" || state === "done")) {
     tickSpawn();
     tickBots(dt);
@@ -818,8 +1290,45 @@ function loop(ts) {
 themeBtn.addEventListener("click", () => applyTheme(theme === "dark" ? "light" : "dark"));
 $("sound").addEventListener("click", () => {
   soundOn = !soundOn;
+  unlockAudio();
   save();
   if (soundOn) boop();
+  renderChrome();
+});
+$("notify").addEventListener("click", () => {
+  toggleNotify();
+});
+$("colors").addEventListener("click", () => {
+  renderSwatches();
+  $("color-sheet").hidden = false;
+});
+$("color-close").addEventListener("click", () => {
+  $("color-sheet").hidden = true;
+});
+$("color-sheet").addEventListener("click", (e) => {
+  if (e.target === $("color-sheet")) $("color-sheet").hidden = true;
+});
+$("color-reset").addEventListener("click", () => {
+  botColor = "";
+  fillColor = "";
+  bgValue = "";
+  save();
+  renderSwatches();
+  renderChrome();
+});
+$("bot-custom").addEventListener("input", (e) => {
+  botColor = e.target.value;
+  save();
+  renderChrome();
+});
+$("fill-custom").addEventListener("input", (e) => {
+  fillColor = e.target.value;
+  save();
+  renderChrome();
+});
+$("bg-custom").addEventListener("input", (e) => {
+  bgValue = e.target.value;
+  save();
   renderChrome();
 });
 startBtn.addEventListener("click", startOrPause);
@@ -919,8 +1428,12 @@ window.addEventListener("resize", () => {
   height = window.innerHeight;
   document.body.classList.toggle("is-coarse", window.matchMedia("(pointer: coarse)").matches || width < 720);
 });
-document.addEventListener("visibilitychange", () => {
-  pageHidden = document.hidden;
-});
+document.addEventListener("visibilitychange", onVisibleAgain);
+window.addEventListener("focus", () => syncFromWall());
+window.addEventListener("pageshow", () => syncFromWall());
+setInterval(() => {
+  syncFromWall();
+  updateTitle();
+}, 1000);
 
 boot();

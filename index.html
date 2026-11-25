@@ -8,8 +8,12 @@
       name="description"
       content="A quiet Grok Bot timer. Set a duration, count up, or wait for an alarm."
     />
-    <link rel="icon" href="%BASE_URL%favicon.svg" type="image/svg+xml" />
+    <link id="favicon" rel="icon" href="%BASE_URL%favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="%BASE_URL%apple-touch-icon.png" />
+    <link rel="manifest" href="%BASE_URL%manifest.webmanifest" />
     <meta name="theme-color" content="#ffffff" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Grok Bot" />
   </head>
   <body>
     <div id="world" data-bots="0" data-landed="0" data-air="0"></div>
@@ -42,6 +46,18 @@
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor" />
               <path class="sound-on" d="M16 9.2a4 4 0 0 1 0 5.6M18.2 7a7 7 0 0 1 0 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+            </svg>
+          </button>
+          <button type="button" class="icon" id="colors" aria-label="Colors" aria-haspopup="dialog">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M14.5 4.5 19.5 9.5 9 20H4v-5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
+              <path d="M4 20c2.2-1 3.4-2.4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+            </svg>
+          </button>
+          <button type="button" class="icon" id="notify" aria-pressed="false" aria-label="Notifications off">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M6 16h12l-1.2-2.2V10a4.8 4.8 0 0 0-9.6 0v3.8z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
+              <path d="M10 16.5a2 2 0 0 0 4 0" fill="none" stroke="currentColor" stroke-width="1.6" />
             </svg>
           </button>
           <button type="button" class="icon" id="theme" aria-label="Dark theme" aria-pressed="false">
@@ -101,6 +117,24 @@
         </div>
       </section>
     </main>
+    <div id="color-sheet" class="sheet" hidden>
+      <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="color-title">
+        <div class="sheet-head">
+          <h2 id="color-title">Colors</h2>
+          <button type="button" class="pill" id="color-close">Done</button>
+        </div>
+        <p class="sheet-label">Bot</p>
+        <div class="swatches" id="bot-swatches"></div>
+        <label class="custom-color">Custom <input id="bot-custom" type="color" value="#0a0a0a" aria-label="Custom bot color" /></label>
+        <p class="sheet-label">Fill</p>
+        <div class="swatches" id="fill-swatches"></div>
+        <label class="custom-color">Custom <input id="fill-custom" type="color" value="#9b6bff" aria-label="Custom fill color" /></label>
+        <p class="sheet-label">Background</p>
+        <div class="swatches" id="bg-swatches"></div>
+        <label class="custom-color">Custom <input id="bg-custom" type="color" value="#ffffff" aria-label="Custom background color" /></label>
+        <button type="button" class="pill" id="color-reset">Reset to default</button>
+      </div>
+    </div>
     <div id="focus-dock" aria-hidden="true">
       <button type="button" class="pill" id="focus-pause">Pause</button>
       <button type="button" class="pill" id="focus-reset">Reset</button>
