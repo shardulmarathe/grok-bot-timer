@@ -415,7 +415,16 @@ function paintHero() {
   });
 }
 
+function phone() {
+  return width < 720;
+}
+
 function rainCap() {
+  if (phone()) {
+    if (state === "done") return 12;
+    if (state === "running") return 9;
+    return 5;
+  }
   if (state === "done") return 22;
   if (state === "running") return 15;
   return 6;
@@ -427,7 +436,7 @@ function spawnDrift({ y, festive = false } = {}) {
   if (bots.filter((b) => b.state === "drift").length >= rainCap()) return;
   const spec = PALETTE[Math.floor(Math.random() * PALETTE.length)];
   const depth = Math.random();
-  const size = Math.round(22 + depth * 34);
+  const size = phone() ? Math.round(16 + depth * 18) : Math.round(22 + depth * 34);
   const drag = 3.2;
   const travel = Math.max(480, height + size + 30);
   const seconds = festive ? 2.6 + (1 - depth) * 2.2 : 6 + (1 - depth) * 8;
@@ -469,15 +478,22 @@ function fillRain() {
   }
 }
 
-function digitShield(x, y) {
+function digitShield(x, y, size = 24) {
   if (state === "done") return 1;
+  let factor = 1;
   const r = clockEl.getBoundingClientRect();
-  if (!r.width) return 1;
-  const dx = Math.max(r.left - x, 0, x - r.right);
-  const dy = Math.max(r.top - y, 0, y - r.bottom);
-  const dist = Math.hypot(dx, dy);
-  if (dist >= 18) return 1;
-  return 0.34 + 0.66 * (dist / 18);
+  if (r.width) {
+    const pad = size * 0.55;
+    const dx = Math.max(r.left - pad - x, 0, x - (r.right + pad));
+    const dy = Math.max(r.top - pad - y, 0, y - (r.bottom + pad));
+    const dist = Math.hypot(dx, dy);
+    if (dist < 12) factor = Math.min(factor, 0.22 + 0.78 * (dist / 12));
+  }
+  const floor = height - (120 + 24);
+  if ((state === "running" || state === "paused") && y > floor) {
+    factor = Math.min(factor, Math.max(0, (height - y) / 120));
+  }
+  return factor;
 }
 
 function danceHero() {
@@ -533,7 +549,7 @@ function tickBots(dt) {
       bot.sway = sway;
       if (bot.y > height + bot.size) bot.dead = true;
       else {
-        bot.svg.style.opacity = String(bot.opacity * digitShield(bot.x, bot.y));
+        bot.svg.style.opacity = String(bot.opacity * digitShield(bot.x, bot.y, bot.size));
         if (state === "running" && tryCatch(bot)) continue;
       }
     } else if (bot.state === "caught") {
@@ -735,6 +751,7 @@ function plusFive() {
 
 function revealDock() {
   if (state !== "running" && state !== "paused") return;
+  document.body.classList.toggle("is-coarse", window.matchMedia("(pointer: coarse)").matches || width < 720);
   focusDock.classList.add("visible");
   focusDock.setAttribute("aria-hidden", "false");
   clearTimeout(dockTimer);
@@ -767,6 +784,7 @@ function boot() {
   armed = mode === "alarm" ? secondsUntilAlarm() : timerSeconds;
   $("alarm-time").value = alarmHHMM;
   applyTheme(theme);
+  document.body.classList.toggle("is-coarse", window.matchMedia("(pointer: coarse)").matches || width < 720);
   buildHero();
   fillRain();
   save();
@@ -899,6 +917,7 @@ window.addEventListener("pointerdown", revealDock);
 window.addEventListener("resize", () => {
   width = window.innerWidth;
   height = window.innerHeight;
+  document.body.classList.toggle("is-coarse", window.matchMedia("(pointer: coarse)").matches || width < 720);
 });
 document.addEventListener("visibilitychange", () => {
   pageHidden = document.hidden;

@@ -47,12 +47,17 @@
 html, body {
   margin: 0;
   min-height: 100%;
+  min-height: 100dvh;
   background: var(--bg);
   color: var(--ink);
   font-family: Inter, sans-serif;
 }
 
-body { overflow: hidden; }
+body {
+  overflow: hidden;
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
 
 button, input { font-family: inherit; color: inherit; }
 
@@ -96,12 +101,12 @@ button, input { font-family: inherit; color: inherit; }
   top: 0;
   left: 0;
   right: 0;
-  z-index: 3;
+  z-index: 5;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 22px 28px;
-  transition: opacity 0.28s ease;
+  padding: max(16px, env(safe-area-inset-top)) 28px 16px;
+  transition: opacity 0.28s ease, visibility 0.28s ease;
 }
 
 .mark { color: var(--ink); display: flex; }
@@ -127,12 +132,14 @@ button, input { font-family: inherit; color: inherit; }
 
 .stage {
   min-height: 100dvh;
+  width: 100%;
+  max-width: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 36px;
-  padding: 96px 24px 48px;
+  padding: calc(88px + env(safe-area-inset-top)) 20px calc(40px + env(safe-area-inset-bottom));
 }
 
 .modes {
@@ -143,12 +150,16 @@ button, input { font-family: inherit; color: inherit; }
   gap: 2px;
 }
 
+.modes {
+  max-width: 100%;
+}
+
 .modes button {
   border: 0;
   background: transparent;
   border-radius: 999px;
-  min-height: 40px;
-  padding: 8px 18px;
+  min-height: 44px;
+  padding: 8px 16px;
   font-size: 14px;
   cursor: pointer;
 }
@@ -249,23 +260,32 @@ body[data-state="done"] .sub { display: none; }
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
+  align-items: center;
   gap: 8px;
+  max-width: 100%;
 }
 
+.presets { width: min(100%, 420px); }
+
 .controls {
+  position: relative;
+  z-index: 5;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 18px;
-  transition: opacity 0.28s ease;
+  width: min(100%, 440px);
+  max-width: 100%;
+  transition: opacity 0.28s ease, visibility 0.28s ease;
 }
 
 .pill {
   border-radius: 999px;
   border: 1px solid var(--line);
-  background: transparent;
+  background: var(--bg);
   color: var(--ink);
   min-height: 44px;
+  min-width: 44px;
   padding: 10px 16px;
   font-size: 15px;
   cursor: pointer;
@@ -315,7 +335,7 @@ body:not([data-mode="alarm"]) .alarm-only,
 body:not([data-mode="stopwatch"]) .watch-only { display: none; }
 
 .top, .controls, .modes, .sub {
-  transition: opacity 0.28s ease;
+  transition: opacity 0.28s ease, visibility 0.28s ease;
 }
 
 body[data-state="running"] .top,
@@ -330,14 +350,30 @@ body[data-state="done"] .top,
 body[data-state="done"] .controls,
 body[data-state="done"] .modes {
   opacity: 0;
+  visibility: hidden;
   pointer-events: none;
+}
+
+/* Leave the document flow so a short phone cannot clip a half-faded control row. */
+body[data-state="running"] .controls,
+body[data-state="running"] .modes,
+body[data-state="paused"] .controls,
+body[data-state="paused"] .modes,
+body[data-state="done"] .controls,
+body[data-state="done"] .modes {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
 }
 
 #focus-dock {
   position: fixed;
   left: 50%;
-  bottom: 28px;
-  z-index: 6;
+  bottom: calc(20px + env(safe-area-inset-bottom));
+  z-index: 8;
   display: none;
   gap: 8px;
   transform: translateX(-50%);
@@ -349,13 +385,19 @@ body[data-state="done"] .modes {
 body[data-state="running"] #focus-dock,
 body[data-state="paused"] #focus-dock { display: flex; }
 
-#focus-dock.visible { opacity: 1; pointer-events: auto; }
+#focus-dock.visible,
+body.is-coarse[data-state="running"] #focus-dock,
+body.is-coarse[data-state="paused"] #focus-dock {
+  opacity: 1;
+  pointer-events: auto;
+}
 
 #focus-dock .pill {
-  min-height: 36px;
-  padding: 8px 14px;
-  font-size: 13px;
-  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  min-height: 44px;
+  min-width: 44px;
+  padding: 10px 16px;
+  font-size: 15px;
+  background: var(--bg);
 }
 
 :focus-visible {
@@ -368,11 +410,13 @@ body[data-state="paused"] #focus-dock { display: flex; }
 }
 
 @media (max-width: 720px) {
-  .top { padding: 16px; }
-  .mark svg { height: 26px; }
-  .hero-wrap { width: 180px; height: 180px; }
-  .digits, .digits-edit { font-size: 64px; }
-  .stage { gap: 28px; padding-top: 84px; }
+  .top { padding: max(12px, env(safe-area-inset-top)) 16px 12px; }
+  .mark svg { height: 28px; }
+  .hero-wrap { width: 168px; height: 168px; }
+  .digits, .digits-edit { font-size: 56px; }
+  .stage { gap: 22px; padding-top: calc(76px + env(safe-area-inset-top)); }
+  .modes button { padding: 8px 12px; }
+  .end-title { font-size: 40px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
